@@ -1,4 +1,4 @@
-name: Build, Test & Publish UBI Image with Podman
+name: Build & Publish UBI Image with Podman
 
 on:
   push:
@@ -10,18 +10,22 @@ permissions:
   packages: write
 
 jobs:
-  build-push-test:
+  build-and-push:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Podman
-        uses: containers/podman-setup-action@v1
+      - name: Install Podman
+        uses: redhat-actions/podman-install@v1
 
       - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image
         run: |
@@ -31,27 +35,7 @@ jobs:
         run: |
           podman push ghcr.io/${{ github.repository }}/x2a-api:latest
 
-      - name: Start API container (background)
+      # Optional: Run test script in a Podman container
+      - name: Run tests in container
         run: |
-          podman run -d --name x2a-api-test -p 8000:8000 ghcr.io/${{ github.repository }}/x2a-api:latest
-          sleep 10 # Wait for the API to be up
-
-      - name: Install test dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install requests sseclient-py
-
-      - name: Run Chef Analysis test script
-        run: |
-          python3 tests/test_chef_agent.py --sync
-          python3 tests/test_chef_agent.py --stream
-
-      - name: Show API logs (for debugging)
-        if: always()
-        run: |
-          podman logs x2a-api-test || true
-
-      - name: Stop API container
-        if: always()
-        run: |
-          podman rm -f x2a-api-test || true
+          podman run --rm ghcr.io/${{ github.repository }}/x2a-api:latest python tests/test_chef_agent.py --sync
