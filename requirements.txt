@@ -1,0 +1,35 @@
+# Chef Analysis Agent Dependencies
+# Production-grade FastAPI application with async HTTP client
+
+# Core web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# HTTP client for LlamaStack communication
+aiohttp==3.9.1
+aiofiles==23.2.0
+
+# Data validation and serialization
+pydantic==2.5.0
+
+# Configuration management
+PyYAML==6.0.1
+
+# Logging and monitoring
+structlog==23.2.0
+
+# Development and testing (optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+
+# Production deployment (optional)
+gunicorn==21.2.0
+
+# Security middleware
+python-multipart==0.0.6
+
+# llama-stack-client
+llama-stack-client
+
+requests

@@ -1,0 +1,2 @@
+[console_scripts]
+llama-stack-client = llama_stack_client.lib.cli.llama_stack_client:main
