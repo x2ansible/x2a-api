@@ -81,7 +81,12 @@ def post_sync(api_base: str, cookbook_name: str, files: dict):
         logger.error(f"Sync API error: {resp.status_code} {resp.text}")
 
 def post_stream(api_base: str, cookbook_name: str, files: dict):
-    import sseclient  # pip install sseclient-py
+    try:
+        import sseclient  # pip install sseclient-py
+    except ImportError:
+        logger.error("sseclient-py not installed. Run: pip install sseclient-py")
+        return
+        
     url = f"{api_base}/chef/analyze/stream"
     payload = {"cookbook_name": cookbook_name, "files": files}
     logger.info(f"POST (streaming) {url} ({len(files)} files)...")
@@ -132,16 +137,25 @@ def main():
     parser.add_argument("--all", action="store_true", help="Send all files (may hit context limit!)")
     parser.add_argument("--sync", action="store_true", help="Run sync API test")
     parser.add_argument("--stream", action="store_true", help="Run streaming API test")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    
     args = parser.parse_args()
 
     # Read files
     cookbook_dir = Path(args.cookbook)
+    if not cookbook_dir.exists():
+        logger.error(f"Cookbook directory not found: {cookbook_dir}")
+        return
+        
     files = read_cookbook_files(cookbook_dir, only_core=not args.all)
 
     if args.sync:
         post_sync(args.api_base, cookbook_dir.name, files)
     if args.stream:
         post_stream(args.api_base, cookbook_dir.name, files)
+    if args.debug:
+        logger.info("Debug mode enabled - additional logging")
+        
     if not args.sync and not args.stream:
         logger.info("Nothing to do. Use --sync and/or --stream.")
 
