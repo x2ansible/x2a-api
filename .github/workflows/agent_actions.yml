@@ -15,25 +15,8 @@ env:
   IMAGE_NAME: x2a-api
 
 jobs:
-  setup-org-defaults:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure organization package defaults
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Checking organization package settings..."
-          
-          # This will help ensure future packages default to public
-          # Note: This requires org admin permissions
-          gh api \
-            -H "Accept: application/vnd.github+json" \
-            /orgs/${{ env.ORG }} \
-            --jq '{default_repository_permission, members_can_create_repositories}' || true
-
   build-and-push:
     runs-on: ubuntu-latest
-    needs: setup-org-defaults
 
     steps:
       - name: Checkout source
@@ -50,13 +33,7 @@ jobs:
         run: |
           echo "${CR_PAT}" | podman login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
-      - name: Extract metadata
-        id: meta
-        run: |
-          echo "image=${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
-          echo "tags=${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
-
-      - name: Build image with proper labels for public access
+      - name: Build image with enhanced labels for linking
         run: |
           podman build \
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
@@ -67,7 +44,8 @@ jobs:
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             --label "org.opencontainers.image.licenses=MIT" \
-            --label "io.github.visibility=public" \
+            --label "org.opencontainers.image.vendor=${{ env.ORG }}" \
+            --label "org.opencontainers.image.title=${{ env.IMAGE_NAME }}" \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             -f Containerfile .
@@ -77,77 +55,10 @@ jobs:
           podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest
           podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-      - name: Wait for package creation
+      - name: Package published successfully
         run: |
-          echo "Waiting for package to be created in registry..."
-          sleep 15
-
-      - name: Make package public with comprehensive retry
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Making ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }} public"
-          
-          # Multiple attempts with different API approaches
-          SUCCESS=false
-          
-          # Method 1: Direct package visibility API
-          for i in {1..8}; do
-            echo "Attempt $i: Setting package visibility via packages API"
-            if gh api \
-              --method PATCH \
-              -H "Accept: application/vnd.github+json" \
-              /orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }} \
-              -f visibility=public 2>/dev/null; then
-              echo " Successfully made package public via packages API"
-              SUCCESS=true
-              break
-            fi
-            echo "Retrying in 10 seconds..."
-            sleep 10
-          done
-          
-          # Method 2: Repository-based approach if first method fails
-          if [ "$SUCCESS" = false ]; then
-            echo "Trying repository-based package management..."
-            for i in {1..5}; do
-              echo "Attempt $i: Repository-based package visibility"
-              if gh api \
-                --method PATCH \
-                -H "Accept: application/vnd.github+json" \
-                /repos/${{ github.repository }}/packages/container/${{ env.IMAGE_NAME }} \
-                -f visibility=public 2>/dev/null; then
-                echo " Successfully made package public via repository API"
-                SUCCESS=true
-                break
-              fi
-              sleep 5
-            done
-          fi
-          
-          if [ "$SUCCESS" = false ]; then
-            echo " Automated public setting failed. Manual intervention may be required."
-            echo "Please visit: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings"
-          fi
-
-      - name: Verify package accessibility
-        run: |
-          echo "Verifying package is publicly accessible..."
-          sleep 5
-          
-          # Logout and test anonymous access
-          podman logout ${{ env.REGISTRY }} || true
-          
-          # Test public pull
-          if podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest; then
-            echo " Package is publicly accessible"
-          else
-            echo " Package may not be public yet"
-            echo "Check manually at: https://github.com/orgs/${{ env.ORG }}/packages"
-          fi
-
-      - name: Output package information
-        run: |
+          echo " Package published successfully!"
+          echo ""
           echo "📦 Package Information:"
           echo "Registry: ${{ env.REGISTRY }}"
           echo "Organization: ${{ env.ORG }}"
@@ -155,6 +66,21 @@ jobs:
           echo "Latest Tag: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
           echo "SHA Tag: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo ""
-          echo "🔗 Useful Links:"
-          echo "Package Page: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}"
-          echo "Package Settings: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings"
+          echo "🔧 To make this package public:"
+          echo "1. Visit: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings"
+          echo "2. Change 'Package visibility' from Private to Public"
+          echo "3. Click 'I understand the consequences, change package visibility'"
+          echo ""
+          echo "🔗 Package URL: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}"
+
+      - name: Test package accessibility (will fail if private)
+        continue-on-error: true
+        run: |
+          echo "Testing package accessibility..."
+          podman logout ${{ env.REGISTRY }} || true
+          if podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest; then
+            echo " Package is publicly accessible"
+          else
+            echo "ℹ Package is private (expected for organization packages)"
+            echo "Manual step required to make it public"
+          fi
