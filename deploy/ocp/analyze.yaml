@@ -1,0 +1,174 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: x2a-api-config
+  namespace: x2ansible
+data:
+  config.yaml: |
+    # Chef Analysis Agent Configuration
+    active_profile: "local"
+    defaults:
+      llama_stack:
+        base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+        model: "meta-llama/Llama-3.1-8B-Instruct"
+      agents:
+        chef_analysis:
+          timeout: 120
+          max_tokens: 4096
+    profiles:
+      local:
+        llama_stack:
+          base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+          model: "meta-llama/Llama-3.1-8B-Instruct"
+        agents:
+          chef_analysis:
+            timeout: 90
+            max_tokens: 4096
+      staging:
+        llama_stack:
+          base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+          model: "meta-llama/Llama-3.1-8B-Instruct"
+        agents:
+          chef_analysis:
+            timeout: 120
+            max_tokens: 4096
+      production:
+        llama_stack:
+          base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+          model: "meta-llama/Llama-3.1-8B-Instruct"
+        agents:
+          chef_analysis:
+            timeout: 180
+            max_tokens: 8192
+    agent_instructions:
+      chef_analysis: |
+        You are a Chef cookbook analyzer. Analyze the provided Chef cookbook and return JSON analysis.
+
+        Think step by step:
+        1. First, identify what Chef patterns and version indicators you see
+        2. Then, determine version requirements based on specific features
+        3. Next, analyze dependency patterns and wrapper relationships  
+        4. Finally, assess functionality and make recommendations
+
+        Task: Analyze Chef cookbook code and return structured analysis covering:
+        1. Chef and Ruby version requirements with migration effort estimation
+        2. Dependency mapping including wrapper cookbook detection
+        3. Functionality comparison for estate-wide consolidation decisions
+
+        Output Format:
+        Return only valid JSON with this exact structure:
+        {
+          "version_requirements": {
+            "min_chef_version": "version or null",
+            "min_ruby_version": "version or null", 
+            "migration_effort": "LOW|MEDIUM|HIGH",
+            "estimated_hours": number_or_null,
+            "deprecated_features": ["list of deprecated features found"]
+          },
+          "dependencies": {
+            "is_wrapper": true/false,
+            "wrapped_cookbooks": ["list of cookbooks this wraps via include_recipe"],
+            "direct_deps": ["list from metadata.rb dependencies"],
+            "runtime_deps": ["list from include_recipe calls"],
+            "circular_risk": "none|low|medium|high"
+          },
+          "functionality": {
+            "primary_purpose": "brief description of what cookbook does",
+            "services": ["list of services managed"],
+            "packages": ["list of packages installed"],
+            "files_managed": ["list of key files/directories managed"],
+            "reusability": "LOW|MEDIUM|HIGH",
+            "customization_points": ["list of key customization areas"]
+          },
+          "recommendations": {
+            "consolidation_action": "REUSE|EXTEND|RECREATE",
+            "rationale": "explanation of recommendation with specific reasoning",
+            "migration_priority": "LOW|MEDIUM|HIGH|CRITICAL",
+            "risk_factors": ["list of migration risks to consider"]
+          }
+        }
+
+        Analysis Guidelines:
+        - For version requirements: Look for Chef APIs (unified_mode = Chef 15+, node.override patterns, etc.)
+        - For Ruby versions: Check syntax patterns (safe navigation &., keyword args, etc.)
+        - For wrappers: Analyze include_recipe calls vs custom recipe ratio and attribute overrides
+        - For effort estimation: Consider deprecated features, version gaps, dependency complexity
+        - For reusability: Assess how configurable and modular the cookbook is
+        - For consolidation: Consider similarity with existing patterns and maintenance overhead
+
+        Rules:
+        - Return only valid JSON, no other text or explanations
+        - Use null for unknown/uncertain values rather than guessing
+        - Be specific about version requirements based on actual code patterns
+        - Identify wrapper patterns through include_recipe analysis and attribute override patterns
+        - Consider real-world migration complexity in effort estimates
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: x2a-api
+  namespace: x2ansible
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: x2a-api
+  template:
+    metadata:
+      labels:
+        app: x2a-api
+    spec:
+      containers:
+        - name: x2a-api
+          image: ghcr.io/x2ansible/x2a-api/x2a-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: CONFIG_FILE
+              value: "/etc/x2a-api/config.yaml"
+            - name: UPLOAD_DIR
+              value: "/tmp/uploads"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/x2a-api
+              readOnly: true
+            - name: uploads
+              mountPath: /tmp/uploads
+      volumes:
+        - name: config-volume
+          configMap:
+            name: x2a-api-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: uploads
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: x2a-api
+  namespace: x2ansible
+spec:
+  selector:
+    app: x2a-api
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: x2a-api
+  namespace: x2ansible
+spec:
+  to:
+    kind: Service
+    name: x2a-api
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
