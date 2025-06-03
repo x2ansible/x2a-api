@@ -33,3 +33,5 @@ python-multipart==0.0.6
 llama-stack-client
 
 requests
+
+fire>=0.5.0
