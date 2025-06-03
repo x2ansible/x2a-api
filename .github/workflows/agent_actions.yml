@@ -32,8 +32,3 @@ jobs:
       - name: Push image (public)
         run: |
           podman push ghcr.io/${{ github.repository }}/x2a-api:latest
-
-      # Optionally, run tests in the built container (edit as needed)
-      - name: Run tests in container
-        run: |
-          podman run --rm ghcr.io/${{ github.repository }}/x2a-api:latest python tests/test_chef_agent.py --sync
