@@ -79,7 +79,7 @@ class ChefAnalysisPostprocessor:
         # 7. Validate and coerce using Pydantic
         try:
             response = CookbookAnalysisResponse(**parsed)
-            logger.info(f"[{correlation_id}]  Complete analysis response validated successfully")
+            logger.info(f"[{correlation_id}] ✅ Complete analysis response validated successfully")
             return response.dict()
         except Exception as e:
             logger.error(f"[{correlation_id}]  Pydantic validation failed: {e}")
@@ -144,7 +144,7 @@ class ChefAnalysisPostprocessor:
         if not parsed.get("confidence_source"):
             parsed["confidence_source"] = "chef_semantic_analysis"
 
-        logger.debug(f"[{correlation_id}]  Additional fields populated successfully")
+        logger.debug(f"[{correlation_id}] ✅ Additional fields populated successfully")
         return parsed
 
     def _extract_json_from_text(self, text: str, correlation_id: str) -> Dict[str, Any]:
@@ -171,7 +171,7 @@ class ChefAnalysisPostprocessor:
         # Strategy 2: Direct JSON parsing
         try:
             result = json.loads(text.strip())
-            logger.debug(f"[{correlation_id}]  Direct JSON parsing successful")
+            logger.debug(f"[{correlation_id}] ✅ Direct JSON parsing successful")
             return result
         except json.JSONDecodeError as e:
             logger.debug(f"[{correlation_id}] Direct JSON parsing failed: {e}")
@@ -188,7 +188,7 @@ class ChefAnalysisPostprocessor:
                 try:
                     cleaned_match = self._clean_json_string(match)
                     result = json.loads(cleaned_match)
-                    logger.debug(f"[{correlation_id}]  Pattern-based JSON extraction successful")
+                    logger.debug(f"[{correlation_id}] ✅ Pattern-based JSON extraction successful")
                     return result
                 except json.JSONDecodeError:
                     continue
@@ -270,7 +270,7 @@ class ChefAnalysisPostprocessor:
             resp = response.dict()
             if error != "Postprocessing failed":
                 resp["postprocess_error"] = error
-            logger.info(f"[{correlation_id}]  Complete response created successfully")
+            logger.info(f"[{correlation_id}] ✅ Complete response created successfully")
             return resp
         except Exception as e:
             logger.error(f"[{correlation_id}]  Complete fallback required: {e}")

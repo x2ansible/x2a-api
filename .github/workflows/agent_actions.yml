@@ -17,13 +17,16 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install Podman
+      - name: Install Podman and gh CLI
         run: |
           sudo apt-get update
-          sudo apt-get -y install podman
+          sudo apt-get -y install podman gh
 
       - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${CR_PAT}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build image
         run: |
@@ -33,18 +36,18 @@ jobs:
         run: |
           podman push ghcr.io/x2ansible/x2a-api:latest
 
-      - name: Install GitHub CLI
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gh
-
-      - name: Make GHCR image public (org-level)
+      - name: Make GHCR image public (retry up to 60s)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Making ghcr.io/x2ansible/x2a-api public"
-          gh api \
-            --method PATCH \
-            -H "Accept: application/vnd.github.v3+json" \
-            /orgs/x2ansible/packages/container/x2a-api/visibility \
-            -f visibility=public
+          ORG="x2ansible"
+          IMAGE="x2a-api"
+          echo "Making ghcr.io/$ORG/$IMAGE public"
+          for i in {1..12}; do
+            gh api \
+              --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              /orgs/$ORG/packages/container/$IMAGE/visibility \
+              -f visibility=public && break || sleep 5
+            echo "Retrying PATCH... attempt $i"
+          done

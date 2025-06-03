@@ -43,7 +43,7 @@ class ChefAnalysisAgent:
         # Initialize agent with instructions (exactly like ClassifierAgent)
         self._initialize_agent()
         
-        self.logger.info(f" Chef Analysis Agent initialized successfully")
+        self.logger.info(f"✅ Chef Analysis Agent initialized successfully")
         self.logger.info(f"Model: {self.model}")
 
     def _get_current_instructions(self) -> str:
@@ -102,7 +102,7 @@ RESPONSE FORMAT: Return ONLY the JSON object above with actual analysis values."
                 model=self.model,
                 instructions=self.instructions
             )
-            self.logger.info(" Chef Analysis Agent initialized")
+            self.logger.info("✅ Chef Analysis Agent initialized")
         except Exception as e:
             self.logger.error(f" Failed to initialize agent: {e}")
             raise ConfigurationError(f"Agent initialization failed: {e}")
@@ -160,7 +160,7 @@ RESPONSE FORMAT: Return ONLY the JSON object above with actual analysis values."
             logger.info("🔄 Attempt 1: Direct JSON analysis")
             result = await self._analyze_like_classifier(cookbook_content, correlation_id, logger)
             if result and result.get("success") and not result.get("postprocess_error"):
-                logger.info(" Direct analysis succeeded")
+                logger.info("✅ Direct analysis succeeded")
                 # ALWAYS ensure additional fields are populated
                 result = self._ensure_all_fields_populated(result, cookbook_content, correlation_id)
                 return result
@@ -172,7 +172,7 @@ RESPONSE FORMAT: Return ONLY the JSON object above with actual analysis values."
             logger.info("🔄 Attempt 2: Simple analysis")
             result = await self._try_simple_analysis(cookbook_content, correlation_id, logger)
             if result and result.get("success") and not result.get("postprocess_error"):
-                logger.info(" Simple analysis succeeded")
+                logger.info("✅ Simple analysis succeeded")
                 # ALWAYS ensure additional fields are populated
                 result = self._ensure_all_fields_populated(result, cookbook_content, correlation_id)
                 return result
@@ -298,7 +298,7 @@ CRITICAL: Return ONLY the JSON object above, modified with your actual analysis.
         # Use EXACT ClassifierAgent execution pattern
         try:
             session_id = self.agent.create_session(f"chef_analysis_{correlation_id}")
-            logger.info(f" Created session: {session_id}")
+            logger.info(f"✅ Created session: {session_id}")
             
             turn = self.agent.create_turn(
                 session_id=session_id,
@@ -311,7 +311,7 @@ CRITICAL: Return ONLY the JSON object above, modified with your actual analysis.
             
             # Get response like ClassifierAgent
             raw_response = turn.output_message.content
-            logger.info(f" Received response: {len(raw_response)} chars")
+            logger.info(f"✅ Received response: {len(raw_response)} chars")
             logger.debug(f"🔍 Response preview: {raw_response[:200]}...")
             # Around line 318, add this debug line:
             logger.info(f"🔍 DEBUG: About to call processor with cookbook_content length: {len(cookbook_content)}")
@@ -495,7 +495,7 @@ def create_chef_analysis_agent(config_loader: ConfigLoader) -> ChefAnalysisAgent
     # Create client (same as ClassifierAgent expects)
     try:
         client = LlamaStackClient(base_url=base_url.rstrip('/'))
-        logger.info(f" Created LlamaStack client for {base_url}")
+        logger.info(f"✅ Created LlamaStack client for {base_url}")
     except Exception as e:
         raise ConfigurationError(f"Failed to create LlamaStack client: {e}")
     
