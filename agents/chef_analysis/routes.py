@@ -439,7 +439,25 @@ async def get_agent_config(
         )
 
 # --- Admin Endpoint: List LlamaStack Agents/Version ---
-LLAMASTACK_URL = os.getenv("LLAMASTACK_URL", "http://llamastack:8321")
+def get_llamastack_url() -> str:
+    """Get LlamaStack URL from environment or config."""
+    # Try environment variable first
+    env_url = os.getenv("LLAMASTACK_URL")
+    if env_url:
+        return env_url
+    
+    # Fall back to config loader
+    try:
+        config_loader = ConfigLoader()
+        config = config_loader.get_config()
+        base_url = config.get("defaults", {}).get("llama_stack", {}).get("base_url")
+        if base_url:
+            return base_url
+    except Exception:
+        pass
+    
+    # Final fallback
+    return "http://llamastack:8321"
 
 @router.get(
     "/agents/info",
@@ -448,24 +466,57 @@ LLAMASTACK_URL = os.getenv("LLAMASTACK_URL", "http://llamastack:8321")
 )
 async def get_llamastack_agents_info():
     try:
-        async with httpx.AsyncClient() as client:
+        llamastack_url = get_llamastack_url()
+        logger.info(f"Attempting to connect to LlamaStack at: {llamastack_url}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
             # List all agents
-            resp = await client.get(f"{LLAMASTACK_URL}/v1/agents")
+            agents_url = f"{llamastack_url}/v1/agents"
+            logger.debug(f"Fetching agents from: {agents_url}")
+            
+            resp = await client.get(agents_url)
             if resp.status_code != 200:
-                raise HTTPException(status_code=502, detail="Failed to fetch LlamaStack agents")
+                logger.error(f"LlamaStack agents endpoint returned {resp.status_code}: {resp.text}")
+                raise HTTPException(
+                    status_code=502, 
+                    detail=f"Failed to fetch LlamaStack agents. Status: {resp.status_code}"
+                )
             agents = resp.json()
+            
             # Try to get version if available
             version = None
             try:
-                vresp = await client.get(f"{LLAMASTACK_URL}/v1/version")
+                version_url = f"{llamastack_url}/v1/version"
+                logger.debug(f"Fetching version from: {version_url}")
+                vresp = await client.get(version_url)
                 if vresp.status_code == 200:
                     version = vresp.json()
-            except Exception:
+                else:
+                    logger.warning(f"Version endpoint returned {vresp.status_code}")
+            except Exception as ve:
+                logger.warning(f"Failed to get version info: {str(ve)}")
                 version = None
+                
         return {
+            "llamastack_url": llamastack_url,
             "llamastack_agents": agents,
             "llamastack_version": version,
         }
+    except httpx.TimeoutException:
+        logger.error(f"Timeout connecting to LlamaStack at {llamastack_url}")
+        raise HTTPException(
+            status_code=504, 
+            detail="Timeout connecting to LlamaStack service"
+        )
+    except httpx.ConnectError as ce:
+        logger.error(f"Connection error to LlamaStack: {str(ce)}")
+        raise HTTPException(
+            status_code=502, 
+            detail=f"Cannot connect to LlamaStack service: {str(ce)}"
+        )
     except Exception as e:
         logger.error(f"Failed to proxy llamastack agent info: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"LlamaStack proxy error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"LlamaStack proxy error: {str(e)}"
+        )
