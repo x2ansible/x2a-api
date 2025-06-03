@@ -32,3 +32,19 @@ jobs:
       - name: Push image (public)
         run: |
           podman push ghcr.io/${{ github.repository }}/x2a-api:latest
+
+      - name: Make GHCR image public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Install gh CLI if not already present
+          if ! command -v gh &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y gh
+          fi
+          # Make the image package public (owner/repo/x2a-api)
+          IMAGE_REPO="x2ansible/x2a-api"
+          echo "Making ghcr.io/$IMAGE_REPO public"
+          gh api -X PATCH \
+            -H "Accept: application/vnd.github.v3+json" \
+            /user/packages/container/$IMAGE_REPO/visibility \
+            -f visibility=public
