@@ -1,4 +1,67 @@
-<html>
-  <head><title>Welcome</title></head>
-  <body><h1>Hello from Chef!</h1></body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nginx Webapp - Chef Managed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(255,255,255,0.1);
+            padding: 40px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+        h1 { text-align: center; margin-bottom: 30px; }
+        .feature { margin: 20px 0; padding: 15px; background: rgba(255,255,255,0.2); border-radius: 8px; }
+        .status { color: #90EE90; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Nginx Webapp Deployed Successfully!</h1>
+        
+        <div class="feature">
+            <h3> Chef Cookbook Features</h3>
+            <ul>
+                <li>Chef 15+ with unified_mode enabled</li>
+                <li>Advanced template configurations</li>
+                <li>SSL/HTTPS support with automatic certificates</li>
+                <li>Firewall integration</li>
+                <li>Performance optimizations</li>
+                <li>Security headers and hardening</li>
+            </ul>
+        </div>
+
+        <div class="feature">
+            <h3>📊 Technical Details</h3>
+            <p><strong>Deployment Status:</strong> <span class="status">ACTIVE</span></p>
+            <p><strong>Web Server:</strong> Nginx (Chef Managed)</p>
+            <p><strong>Configuration:</strong> Production Ready</p>
+            <p><strong>Security:</strong> Hardened Configuration</p>
+        </div>
+
+        <div class="feature">
+            <h3>🔧 Chef Analysis Test</h3>
+            <p>This cookbook tests the following detection capabilities:</p>
+            <ul>
+                <li><strong>Min Chef Version:</strong> Should detect ">= 15.3" from metadata.rb</li>
+                <li><strong>Complexity:</strong> Should be "Medium" or "High" (multiple resources, templates)</li>
+                <li><strong>Services:</strong> Should detect "nginx"</li>
+                <li><strong>Packages:</strong> Should detect "nginx"</li>
+                <li><strong>Files Managed:</strong> Should detect nginx config files</li>
+                <li><strong>Dependencies:</strong> Should detect compat_resource, systemd, firewall</li>
+                <li><strong>Wrapper Status:</strong> Should be "false" (has own resources)</li>
+            </ul>
+        </div>
+    </div>
+</body>
 </html>

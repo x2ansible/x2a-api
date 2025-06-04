@@ -21,11 +21,45 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          # Fetch full history for proper version calculation
+          fetch-depth: 0
 
       - name: Install Podman and gh CLI
         run: |
           sudo apt-get update
           sudo apt-get -y install podman gh
+
+      - name: Generate version tags
+        id: version
+        run: |
+          # Get the current date for date-based versioning
+          DATE_TAG=$(date +'%Y.%m.%d')
+          
+          # Get short commit SHA
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          
+          # Count commits to create build number
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          
+          # Create semantic version: YYYY.MM.DD.BUILD_NUMBER
+          SEMANTIC_VERSION="${DATE_TAG}.${BUILD_NUMBER}"
+          
+          # Create timestamp for unique identification
+          TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+          
+          echo "DATE_TAG=${DATE_TAG}" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "BUILD_NUMBER=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
+          echo "SEMANTIC_VERSION=${SEMANTIC_VERSION}" >> $GITHUB_OUTPUT
+          echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          
+          echo "📋 Generated version tags:"
+          echo "  Semantic Version: ${SEMANTIC_VERSION}"
+          echo "  Date Tag: ${DATE_TAG}"
+          echo "  Short SHA: ${SHORT_SHA}"
+          echo "  Build Number: ${BUILD_NUMBER}"
+          echo "  Timestamp: ${TIMESTAMP}"
 
       - name: Login to GHCR
         env:
@@ -33,38 +67,64 @@ jobs:
         run: |
           echo "${CR_PAT}" | podman login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
-      - name: Build image with enhanced labels for linking
+      - name: Build image with enhanced labels and multiple tags
         run: |
           podman build \
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.description=${{ env.IMAGE_NAME }} API" \
             --label "org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}" \
-            --label "org.opencontainers.image.version=${{ github.sha }}" \
+            --label "org.opencontainers.image.version=${{ steps.version.outputs.SEMANTIC_VERSION }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             --label "org.opencontainers.image.licenses=MIT" \
             --label "org.opencontainers.image.vendor=${{ env.ORG }}" \
             --label "org.opencontainers.image.title=${{ env.IMAGE_NAME }}" \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest \
-            -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }} \
+            -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }} \
+            -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }} \
             -f Containerfile .
 
-      - name: Push images
+      - name: Push all image tags
         run: |
+          echo "📤 Pushing multiple image tags..."
           podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest
-          podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}
+          podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}
+          podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}
+          podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }}
+          echo " All tags pushed successfully"
 
       - name: Package published successfully
         run: |
-          echo " Package published successfully!"
+          echo "🎉 Package published successfully!"
           echo ""
           echo "📦 Package Information:"
           echo "Registry: ${{ env.REGISTRY }}"
           echo "Organization: ${{ env.ORG }}"
           echo "Package: ${{ env.IMAGE_NAME }}"
-          echo "Latest Tag: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
-          echo "SHA Tag: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo ""
+          echo "🏷️ Available Tags:"
+          echo "  Latest: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
+          echo "  Version: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}"
+          echo "  Date: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}"
+          echo "  SHA: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}"
+          echo "  Build: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }}"
+          echo ""
+          echo "📋 Usage Examples:"
+          echo "  # Pull latest version"
+          echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
+          echo ""
+          echo "  # Pull specific version"
+          echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}"
+          echo ""
+          echo "  # Pull by date"
+          echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}"
+          echo ""
+          echo "  # Pull by commit"
+          echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}"
           echo ""
           echo "🔧 To make this package public:"
           echo "1. Visit: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings"
@@ -76,11 +136,38 @@ jobs:
       - name: Test package accessibility (will fail if private)
         continue-on-error: true
         run: |
-          echo "Testing package accessibility..."
+          echo "🧪 Testing package accessibility..."
           podman logout ${{ env.REGISTRY }} || true
           if podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest; then
             echo " Package is publicly accessible"
           else
-            echo "ℹ Package is private (expected for organization packages)"
-            echo "Manual step required to make it public"
+            echo "ℹ️ Package is private (expected for organization packages)"
+            echo "📝 Manual step required to make it public"
           fi
+
+      - name: Create deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Image Tags Created" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag Type | Value | Full Image Reference |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|---------------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Latest | \`latest\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Semantic | \`${{ steps.version.outputs.SEMANTIC_VERSION }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Date | \`${{ steps.version.outputs.DATE_TAG }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ steps.version.outputs.SHORT_SHA }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | \`build-${{ steps.version.outputs.BUILD_NUMBER }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [📦 Package Registry](https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [⚙️ Package Settings](https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings)" >> $GITHUB_STEP_SUMMARY
+          echo "- [📋 Repository](https://github.com/${{ github.repository }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📖 Usage" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull latest" >> $GITHUB_STEP_SUMMARY
+          echo "podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull specific version" >> $GITHUB_STEP_SUMMARY
+          echo "podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

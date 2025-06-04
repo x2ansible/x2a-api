@@ -17,7 +17,6 @@ from shared.exceptions import (
 )
 from shared.log_utils import create_chef_logger, ChefAnalysisLogger, step_printer
 
-# Use the SAME imports as ClassifierAgent (that works)
 from llama_stack_client import Agent
 from llama_stack_client.types import UserMessage
 
@@ -26,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 class ChefAnalysisAgent:
     """
-    Chef Analysis Agent using EXACT same pattern as ClassifierAgent.
-    Takes a pre-initialized client like ClassifierAgent does.
+    Chef Analysis Agent - Simplified to focus on LLM interaction only
+    All intelligent defaults and analysis logic moved to processor
     """
     def __init__(self, client: Any, model: str, timeout: int = 120):
         """Initialize exactly like ClassifierAgent - with pre-initialized client"""
@@ -43,7 +42,7 @@ class ChefAnalysisAgent:
         # Initialize agent with instructions (exactly like ClassifierAgent)
         self._initialize_agent()
         
-        self.logger.info(f"✅ Chef Analysis Agent initialized successfully")
+        self.logger.info(f"Chef Analysis Agent initialized successfully")
         self.logger.info(f"Model: {self.model}")
 
     def _get_current_instructions(self) -> str:
@@ -55,7 +54,7 @@ class ChefAnalysisAgent:
         return instructions
 
     def _get_working_instructions(self) -> str:
-        """Working instructions that force JSON output"""
+        """Working instructions that force JSON output - NO hardcoded values"""
         return """You are a Chef cookbook analyzer. You MUST return ONLY valid JSON.
 
 CRITICAL: Your response must be ONLY a JSON object. No explanations, no markdown, no text before or after.
@@ -63,32 +62,32 @@ CRITICAL: Your response must be ONLY a JSON object. No explanations, no markdown
 Analyze Chef cookbooks and return this EXACT JSON structure:
 {
   "version_requirements": {
-    "min_chef_version": "string or null",
-    "min_ruby_version": "string or null", 
-    "migration_effort": "LOW|MEDIUM|HIGH",
-    "estimated_hours": number,
-    "deprecated_features": []
+    "min_chef_version": "analyze APIs used and determine minimum version required",
+    "min_ruby_version": "analyze syntax patterns and determine minimum version required", 
+    "migration_effort": "LOW|MEDIUM|HIGH based on complexity analysis",
+    "estimated_hours": "estimate based on cookbook complexity (as number)",
+    "deprecated_features": ["list deprecated features found"]
   },
   "dependencies": {
-    "is_wrapper": false,
-    "wrapped_cookbooks": [],
-    "direct_deps": [],
-    "runtime_deps": [],
-    "circular_risk": "none"
+    "is_wrapper": "true/false based on include_recipe analysis",
+    "wrapped_cookbooks": ["list cookbooks wrapped via include_recipe"],
+    "direct_deps": ["dependencies from metadata.rb"],
+    "runtime_deps": ["dependencies from recipe analysis"],
+    "circular_risk": "none|low|medium|high"
   },
   "functionality": {
-    "primary_purpose": "string description",
-    "services": [],
-    "packages": [],
-    "files_managed": [],
-    "reusability": "LOW|MEDIUM|HIGH",
-    "customization_points": []
+    "primary_purpose": "describe what this cookbook does",
+    "services": ["services managed by this cookbook"],
+    "packages": ["packages installed by this cookbook"],
+    "files_managed": ["key files/directories managed"],
+    "reusability": "LOW|MEDIUM|HIGH based on configurability",
+    "customization_points": ["areas where cookbook can be customized"]
   },
   "recommendations": {
-    "consolidation_action": "REUSE|EXTEND|RECREATE",
-    "rationale": "string explanation",
-    "migration_priority": "LOW|MEDIUM|HIGH",
-    "risk_factors": []
+    "consolidation_action": "REUSE|EXTEND|RECREATE based on analysis",
+    "rationale": "explain recommendation with specific reasoning",
+    "migration_priority": "LOW|MEDIUM|HIGH|CRITICAL based on complexity",
+    "risk_factors": ["specific migration risks identified"]
   }
 }
 
@@ -102,7 +101,7 @@ RESPONSE FORMAT: Return ONLY the JSON object above with actual analysis values."
                 model=self.model,
                 instructions=self.instructions
             )
-            self.logger.info("✅ Chef Analysis Agent initialized")
+            self.logger.info("Chef Analysis Agent initialized")
         except Exception as e:
             self.logger.error(f" Failed to initialize agent: {e}")
             raise ConfigurationError(f"Agent initialization failed: {e}")
@@ -153,152 +152,93 @@ RESPONSE FORMAT: Return ONLY the JSON object above with actual analysis values."
         return "\n".join(content_parts)
 
     async def _analyze_with_retries(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger) -> Dict[str, Any]:
-        """Try multiple approaches to get valid JSON"""
+        """Try multiple approaches to get valid JSON - Processor handles all defaults"""
         
         # Attempt 1: Direct JSON request (like ClassifierAgent)
         try:
             logger.info("🔄 Attempt 1: Direct JSON analysis")
             result = await self._analyze_like_classifier(cookbook_content, correlation_id, logger)
             if result and result.get("success") and not result.get("postprocess_error"):
-                logger.info("✅ Direct analysis succeeded")
-                # ALWAYS ensure additional fields are populated
-                result = self._ensure_all_fields_populated(result, cookbook_content, correlation_id)
+                logger.info(" Direct analysis succeeded")
                 return result
+            else:
+                logger.warning(f" Direct analysis failed: success={result.get('success') if result else None}, error={result.get('postprocess_error') if result else None}")
         except Exception as e:
-            logger.warning(f"Attempt 1 failed: {e}")
+            logger.warning(f" Attempt 1 failed with exception: {e}")
 
         # Attempt 2: Simple prompt
         try:
             logger.info("🔄 Attempt 2: Simple analysis")
             result = await self._try_simple_analysis(cookbook_content, correlation_id, logger)
             if result and result.get("success") and not result.get("postprocess_error"):
-                logger.info("✅ Simple analysis succeeded")
-                # ALWAYS ensure additional fields are populated
-                result = self._ensure_all_fields_populated(result, cookbook_content, correlation_id)
+                logger.info(" Simple analysis succeeded")
                 return result
+            else:
+                logger.warning(f" Simple analysis failed: success={result.get('success') if result else None}, error={result.get('postprocess_error') if result else None}")
         except Exception as e:
-            logger.warning(f"Attempt 2 failed: {e}")
+            logger.warning(f" Attempt 2 failed with exception: {e}")
 
-        # Attempt 3: Fallback to programmatic analysis
-        logger.info("🔄 Attempt 3: Creating programmatic analysis")
-        return self._create_minimal_response(cookbook_content, correlation_id)
-
-    def _ensure_all_fields_populated(self, result: Dict[str, Any], cookbook_content: str, correlation_id: str) -> Dict[str, Any]:
-        """Ensure all additional fields are populated even if LLM didn't provide them"""
-        
-        # If the additional fields are missing or null, populate them
-        if not result.get("detailed_analysis"):
-            has_nginx = "nginx" in cookbook_content.lower()
-            result["detailed_analysis"] = f"This Chef cookbook appears to be a {'web server' if has_nginx else 'system configuration'} cookbook. It contains {len(cookbook_content.split('===')) - 1} files and manages {'nginx web server installation and configuration' if has_nginx else 'system components and services'}. The cookbook has good structure and is suitable for reuse."
-
-        if not result.get("key_operations") or len(result.get("key_operations", [])) == 0:
-            key_operations = []
-            if "package" in cookbook_content.lower():
-                key_operations.append("Package installation")
-            if "service" in cookbook_content.lower():
-                key_operations.append("Service management")
-            if "file" in cookbook_content.lower():
-                key_operations.append("File management")
-            if "template" in cookbook_content.lower():
-                key_operations.append("Template configuration")
-            result["key_operations"] = key_operations or ["System configuration"]
-
-        if not result.get("configuration_details"):
-            complexity_factors = sum([
-                "recipe" in cookbook_content.lower(),
-                "attribute" in cookbook_content.lower(),
-                "service" in cookbook_content.lower(),
-                "package" in cookbook_content.lower()
-            ])
-            if complexity_factors <= 1:
-                complexity = "Low"
-            elif complexity_factors <= 3:
-                complexity = "Medium"
-            else:
-                complexity = "High"
-            result["configuration_details"] = f"Chef cookbook with {complexity.lower()} configuration complexity"
-
-        if not result.get("complexity_level"):
-            complexity_factors = sum([
-                "recipe" in cookbook_content.lower(),
-                "attribute" in cookbook_content.lower(),
-                "service" in cookbook_content.lower(),
-                "package" in cookbook_content.lower()
-            ])
-            if complexity_factors <= 1:
-                result["complexity_level"] = "Low"
-            elif complexity_factors <= 3:
-                result["complexity_level"] = "Medium"
-            else:
-                result["complexity_level"] = "High"
-
-        if result.get("convertible") is None:
-            result["convertible"] = True
-
-        if not result.get("conversion_notes"):
-            result["conversion_notes"] = "Chef cookbook can be converted to Ansible playbooks using standard automation tool conversion approaches. Package and service management translate directly to Ansible modules."
-
-        if not result.get("confidence_source"):
-            result["confidence_source"] = "chef_semantic_analysis"
-
-        return result
+        # Attempt 3: Let processor handle complete fallback
+        logger.warning("⚠️ LLM analysis failed - processor will handle intelligent fallback")
+        # Pass empty response to processor - it will create intelligent defaults
+        return extract_and_validate_analysis("{}", correlation_id, cookbook_content)
 
     async def _analyze_like_classifier(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger) -> Optional[Dict[str, Any]]:
-        """Use EXACT ClassifierAgent pattern"""
+        """Use EXACT ClassifierAgent pattern - NO hardcoded example values"""
         
-        # Create prompt like ClassifierAgent does
+        # Create prompt without biasing example values
         prompt = f"""Analyze this Chef cookbook and return ONLY valid JSON.
 
 <COOKBOOK>
 {cookbook_content}
 </COOKBOOK>
 
-Return this JSON structure with your analysis:
+Analyze the cookbook content above and return this JSON structure with your actual analysis:
 
 {{
   "version_requirements": {{
-    "min_chef_version": "15.0",
-    "min_ruby_version": "2.7", 
-    "migration_effort": "LOW",
-    "estimated_hours": 4,
-    "deprecated_features": []
+    "min_chef_version": "determine minimum Chef version required based on APIs and features used",
+    "min_ruby_version": "determine minimum Ruby version based on syntax patterns", 
+    "migration_effort": "LOW, MEDIUM, or HIGH based on complexity and deprecated features",
+    "estimated_hours": "estimate hours based on cookbook size and complexity (as number)",
+    "deprecated_features": ["list any deprecated Chef features found in the code"]
   }},
   "dependencies": {{
-    "is_wrapper": false,
-    "wrapped_cookbooks": [],
-    "direct_deps": ["nginx"],
-    "runtime_deps": [],
-    "circular_risk": "none"
+    "is_wrapper": "true if this cookbook wraps others via include_recipe, false otherwise",
+    "wrapped_cookbooks": ["list cookbooks included via include_recipe calls"],
+    "direct_deps": ["list dependencies from metadata.rb depends statements"],
+    "runtime_deps": ["list runtime dependencies discovered from recipe analysis"],
+    "circular_risk": "none, low, medium, or high based on dependency analysis"
   }},
   "functionality": {{
-    "primary_purpose": "Web server configuration",
-    "services": ["nginx"],
-    "packages": ["nginx"],
-    "files_managed": ["/etc/nginx/nginx.conf"],
-    "reusability": "HIGH",
-    "customization_points": ["port", "document_root"]
+    "primary_purpose": "describe what this cookbook actually does based on analysis",
+    "services": ["list services this cookbook manages based on service resources"],
+    "packages": ["list packages this cookbook installs based on package resources"],
+    "files_managed": ["list key files/directories managed based on file/template resources"],
+    "reusability": "LOW, MEDIUM, or HIGH based on configurability and modularity",
+    "customization_points": ["list key areas where this cookbook can be customized"]
   }},
   "recommendations": {{
-    "consolidation_action": "REUSE",
-    "rationale": "Standard nginx cookbook with good reusability",
-    "migration_priority": "LOW",
-    "risk_factors": []
+    "consolidation_action": "REUSE, EXTEND, or RECREATE based on analysis",
+    "rationale": "explain your recommendation with specific reasoning based on the cookbook",
+    "migration_priority": "LOW, MEDIUM, HIGH, or CRITICAL based on complexity and risk",
+    "risk_factors": ["list specific migration risks identified from analysis"]
   }},
-  "detailed_analysis": "Comprehensive analysis of what this cookbook does and how it works",
-  "key_operations": ["Package installation", "Service management", "Configuration management"],
-  "configuration_details": "Details about the configuration complexity and approach",
-  "complexity_level": "Medium",
-  "convertible": true,
-  "conversion_notes": "This cookbook can be converted to Ansible with standard approaches",
+  "detailed_analysis": "provide comprehensive analysis of cookbook functionality, structure, and characteristics",
+  "key_operations": ["list main operations performed by this cookbook based on resources used"],
+  "configuration_details": "describe the configuration approach, complexity, and patterns used",
+  "complexity_level": "Low, Medium, or High based on actual analysis of cookbook structure",
+  "convertible": true_or_false_based_on_convertibility_assessment,
+  "conversion_notes": "specific notes about converting this cookbook to other automation tools",
   "confidence_source": "chef_semantic_analysis"
 }}
 
-CRITICAL: Return ONLY the JSON object above, modified with your actual analysis. No other text."""
+CRITICAL: Return ONLY the JSON object with your actual analysis values. Replace all instruction text with real analysis results. No other text."""
 
         # Use EXACT ClassifierAgent execution pattern
         try:
             session_id = self.agent.create_session(f"chef_analysis_{correlation_id}")
-            logger.info(f"✅ Created session: {session_id}")
+            logger.info(f" Created session: {session_id}")
             
             turn = self.agent.create_turn(
                 session_id=session_id,
@@ -311,15 +251,13 @@ CRITICAL: Return ONLY the JSON object above, modified with your actual analysis.
             
             # Get response like ClassifierAgent
             raw_response = turn.output_message.content
-            logger.info(f"✅ Received response: {len(raw_response)} chars")
+            logger.info(f" Received response: {len(raw_response)} chars")
             logger.debug(f"🔍 Response preview: {raw_response[:200]}...")
-            # Around line 318, add this debug line:
-            logger.info(f"🔍 DEBUG: About to call processor with cookbook_content length: {len(cookbook_content)}")
+            
+            # Let processor handle ALL analysis and defaults
             result = extract_and_validate_analysis(raw_response, correlation_id, cookbook_content)
-            logger.info(f"🔍 DEBUG: Processor returned detailed_analysis: {result.get('detailed_analysis')}")
-                        
-            # Process response
-            result = extract_and_validate_analysis(raw_response, correlation_id, cookbook_content)
+            logger.info(f"🔍 Processor returned: success={result.get('success')}")
+            
             return result
             
         except Exception as e:
@@ -327,24 +265,39 @@ CRITICAL: Return ONLY the JSON object above, modified with your actual analysis.
             return None
 
     async def _try_simple_analysis(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger) -> Optional[Dict[str, Any]]:
-        """Simple fallback analysis"""
+        """Simple fallback analysis - NO hardcoded example values"""
         prompt = f"""Analyze this Chef cookbook:
 
 {cookbook_content}
 
-Return only this JSON (fill in the values):
+Return only this JSON structure with your analysis (replace all instruction text with actual values):
 {{
-  "version_requirements": {{"min_chef_version": "14.0", "migration_effort": "LOW", "estimated_hours": 4}},
-  "dependencies": {{"is_wrapper": false, "direct_deps": []}},
-  "functionality": {{"primary_purpose": "describe what this cookbook does", "reusability": "MEDIUM"}},
-  "recommendations": {{"consolidation_action": "REUSE", "rationale": "explain why"}},
-  "detailed_analysis": "Brief analysis of the cookbook functionality",
-  "key_operations": ["list", "main", "operations"],
-  "configuration_details": "Configuration approach used",
-  "complexity_level": "Medium",
+  "version_requirements": {{
+    "min_chef_version": "analyze_cookbook_and_determine_minimum_chef_version", 
+    "migration_effort": "analyze_complexity_and_determine_LOW_MEDIUM_or_HIGH", 
+    "estimated_hours": "estimate_based_on_cookbook_complexity_as_number"
+  }},
+  "dependencies": {{
+    "is_wrapper": "analyze_for_include_recipe_patterns_true_or_false", 
+    "direct_deps": ["analyze_metadata_dependencies"]
+  }},
+  "functionality": {{
+    "primary_purpose": "analyze_and_describe_what_this_cookbook_does", 
+    "reusability": "analyze_and_rate_LOW_MEDIUM_or_HIGH"
+  }},
+  "recommendations": {{
+    "consolidation_action": "analyze_and_recommend_REUSE_EXTEND_or_RECREATE", 
+    "rationale": "provide_specific_reasoning_based_on_analysis"
+  }},
+  "detailed_analysis": "analyze_cookbook_and_provide_comprehensive_description_of_functionality",
+  "key_operations": ["analyze_and_list_main_operations_performed"],
+  "configuration_details": "analyze_configuration_approach_and_complexity_used",
+  "complexity_level": "analyze_and_determine_Low_Medium_or_High",
   "convertible": true,
-  "conversion_notes": "Standard Chef to Ansible conversion approach applicable"
-}}"""
+  "conversion_notes": "analyze_convertibility_and_provide_specific_conversion_notes"
+}}
+
+CRITICAL: Replace ALL instruction text with your actual analysis values."""
 
         try:
             session_id = self.agent.create_session(f"simple_{correlation_id}")
@@ -357,94 +310,13 @@ Return only this JSON (fill in the values):
             raw_response = turn.output_message.content
             logger.info(f"📥 Simple response: {len(raw_response)} chars")
             
+            # Let processor handle ALL analysis and defaults
             result = extract_and_validate_analysis(raw_response, correlation_id, cookbook_content)
-
             return result
             
         except Exception as e:
             logger.error(f" Simple analysis failed: {e}")
             return None
-
-    def _create_minimal_response(self, cookbook_content: str, correlation_id: str) -> Dict[str, Any]:
-        """Create minimal valid response with all fields populated"""
-        self.logger.info("🔧 Creating minimal response")
-        
-        # Basic analysis of content
-        has_nginx = "nginx" in cookbook_content.lower()
-        has_service = "service" in cookbook_content.lower() 
-        has_package = "package" in cookbook_content.lower()
-        has_recipes = "recipe" in cookbook_content.lower()
-        has_attributes = "attribute" in cookbook_content.lower()
-        
-        # Analyze key operations
-        key_operations = []
-        if has_package:
-            key_operations.append("Package installation")
-        if has_service:
-            key_operations.append("Service management")
-        if "file" in cookbook_content.lower():
-            key_operations.append("File management")
-        if "template" in cookbook_content.lower():
-            key_operations.append("Template configuration")
-        
-        # Determine complexity
-        complexity_factors = sum([has_recipes, has_attributes, has_service, has_package])
-        if complexity_factors <= 1:
-            complexity = "Low"
-        elif complexity_factors <= 3:
-            complexity = "Medium"
-        else:
-            complexity = "High"
-        
-        # Create detailed analysis
-        detailed_analysis = f"This Chef cookbook appears to be a {'web server' if has_nginx else 'system configuration'} cookbook. "
-        detailed_analysis += f"It contains {len(cookbook_content.split('===')) - 1} files and manages "
-        if has_nginx:
-            detailed_analysis += "nginx web server installation and configuration. "
-        else:
-            detailed_analysis += "system components and services. "
-        detailed_analysis += f"The cookbook has {complexity.lower()} complexity and is suitable for reuse."
-        
-        minimal_data = {
-            "version_requirements": {
-                "min_chef_version": "14.0",
-                "min_ruby_version": "2.5",
-                "migration_effort": "LOW",
-                "estimated_hours": 4.0,
-                "deprecated_features": []
-            },
-            "dependencies": {
-                "is_wrapper": False,
-                "wrapped_cookbooks": [],
-                "direct_deps": ["nginx"] if has_nginx else [],
-                "runtime_deps": [],
-                "circular_risk": "none"
-            },
-            "functionality": {
-                "primary_purpose": "Web server setup" if has_nginx else "System configuration",
-                "services": ["nginx"] if has_nginx and has_service else [],
-                "packages": ["nginx"] if has_nginx and has_package else [],
-                "files_managed": ["/etc/nginx/nginx.conf"] if has_nginx else [],
-                "reusability": "MEDIUM",
-                "customization_points": ["port", "document_root"] if has_nginx else []
-            },
-            "recommendations": {
-                "consolidation_action": "REUSE",
-                "rationale": "Standard cookbook with basic functionality",
-                "migration_priority": "LOW", 
-                "risk_factors": []
-            },
-            # Add the missing fields
-            "detailed_analysis": detailed_analysis,
-            "key_operations": key_operations,
-            "configuration_details": f"Chef cookbook with {complexity.lower()} configuration complexity",
-            "complexity_level": complexity,
-            "convertible": True,  # Chef cookbooks are generally convertible to other automation tools
-            "conversion_notes": "Chef cookbook can be converted to Ansible playbooks or other automation tools with standard approaches",
-            "confidence_source": "chef_semantic_analysis"
-        }
-        
-        return extract_and_validate_analysis(json.dumps(minimal_data), correlation_id, cookbook_content)
     
     async def analyze_cookbook_stream(
         self,
@@ -495,7 +367,7 @@ def create_chef_analysis_agent(config_loader: ConfigLoader) -> ChefAnalysisAgent
     # Create client (same as ClassifierAgent expects)
     try:
         client = LlamaStackClient(base_url=base_url.rstrip('/'))
-        logger.info(f"✅ Created LlamaStack client for {base_url}")
+        logger.info(f" Created LlamaStack client for {base_url}")
     except Exception as e:
         raise ConfigurationError(f"Failed to create LlamaStack client: {e}")
     
