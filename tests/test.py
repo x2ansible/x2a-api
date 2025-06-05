@@ -39,7 +39,7 @@ class ContextAgentTester:
             logger.info("✓ Both agents initialized successfully")
             return True
         except Exception as e:
-            logger.error(f"❌ Failed to setup agents: {e}")
+            logger.error(f" Failed to setup agents: {e}")
             return False
     
     async def create_chef_session_with_cookbook(self):
@@ -161,7 +161,7 @@ http {
             }
             
         except Exception as e:
-            logger.error(f"❌ Failed to create chef session: {e}")
+            logger.error(f" Failed to create chef session: {e}")
             raise
     
     async def test_context_agent_fetch(self, chef_session_info):
@@ -185,7 +185,7 @@ http {
             return result
             
         except Exception as e:
-            logger.error(f"❌ Context agent fetch failed: {e}")
+            logger.error(f" Context agent fetch failed: {e}")
             raise
     
     async def run_full_test(self):
@@ -244,7 +244,7 @@ http {
             return True
             
         except Exception as e:
-            print(f"\n❌ Test failed: {e}")
+            print(f"\n Test failed: {e}")
             logger.error(f"Full test failed: {e}", exc_info=True)
             return False
 

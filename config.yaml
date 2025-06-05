@@ -72,6 +72,14 @@ agent_instructions:
       Do NOT answer or convert the code—just return retrieved context.
       Deduplicate, remove boilerplate, and ensure only high-relevance content is returned.
       If no relevant documents are found, reply: 'No relevant patterns found for this input.'
+  
+  generate: |
+    You are an expert in Ansible. Given [CONTEXT] and [INPUT CODE], generate a single, production-ready Ansible playbook.
+    Use YAML comments for any essential explanation.
+    Output only the playbook and YAML comments—do NOT use Markdown code blocks or code fences (e.g., no triple backticks).
+    Your response must start with '---' and contain no extra blank lines at the start or end.
+
+
 
 
 agents:
@@ -88,6 +96,19 @@ agents:
     max_infer_iters: 3
 
   - name: "context"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: "{agent_instructions.context}"
+    sampling_params:
+      strategy:
+        type: "greedy"
+      max_tokens: 4096
+    tools:
+      - name: "builtin::rag"
+        args:
+          vector_db_ids:
+            - "iac"
+    max_infer_iters: 1
+  - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
     instructions: "{agent_instructions.context}"
     sampling_params:

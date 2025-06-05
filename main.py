@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from routes.chef import router as chef_router
-from routes.context import router as context_router   # <--- ADD THIS LINE
+from routes.context import router as context_router
+from routes.generate import router as generate_router
 from agents.agent import AgentManager
 from config.config import ConfigLoader
 
@@ -33,7 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(chef_router)
-app.include_router(context_router)   # <--- ADD THIS LINE
+app.include_router(context_router)
+app.include_router(generate_router)
+
 
 @app.get("/")
 async def root():
