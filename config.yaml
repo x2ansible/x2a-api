@@ -1,54 +1,7 @@
-# Chef Analysis Agent Configuration
-# Active profile determines which configuration to use
-active_profile: "local"
+llamastack:
+  base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+  default_model: "meta-llama/Llama-3.1-8B-Instruct"
 
-# Default configuration applied to all profiles
-defaults:
-  llama_stack:
-    base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
-  
-  agents:
-    chef_analysis:
-      timeout: 120
-      max_tokens: 4096
-
-# Profile-specific configurations
-profiles:
-  # Local development profile
-  local:
-    llama_stack:
-      base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-      model: "meta-llama/Llama-3.1-8B-Instruct"
-    
-    agents:
-      chef_analysis:
-        timeout: 90
-        max_tokens: 4096
-
-  # Staging environment profile  
-  staging:
-    llama_stack:
-      base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-      model: "meta-llama/Llama-3.1-8B-Instruct"
-    
-    agents:
-      chef_analysis:
-        timeout: 120
-        max_tokens: 4096
-
-  # Production environment profile
-  production:
-    llama_stack:
-      base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-      model: "meta-llama/Llama-3.1-8B-Instruct"
-    
-    agents:
-      chef_analysis:
-        timeout: 180
-        max_tokens: 8192
-
-# Agent-specific instructions
 agent_instructions:
   chef_analysis: |
     You are a Chef cookbook analyzer. Analyze the provided Chef cookbook and return JSON analysis.
@@ -111,3 +64,39 @@ agent_instructions:
     - Be specific about version requirements based on actual code patterns
     - Identify wrapper patterns through include_recipe analysis and attribute override patterns
     - Consider real-world migration complexity in effort estimates
+
+  context: |
+      You are a code analysis assistant whose sole job is to retrieve the most relevant, actionable context from the vector database
+      using the RAG knowledge_search tool for the given code or user question.
+      ALWAYS invoke the knowledge_search tool to look up matching patterns, best practices, or documentation for this input.
+      Do NOT answer or convert the code—just return retrieved context.
+      Deduplicate, remove boilerplate, and ensure only high-relevance content is returned.
+      If no relevant documents are found, reply: 'No relevant patterns found for this input.'
+
+
+agents:
+  - name: "chef_analysis"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: "{agent_instructions.chef_analysis}"   # Will be expanded by config.py
+    sampling_params:
+      strategy:
+        type: "top_p"
+        temperature: 0.7
+        top_p: 0.9
+      max_tokens: 4096
+      repetition_penalty: 1.0
+    max_infer_iters: 3
+
+  - name: "context"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: "{agent_instructions.context}"
+    sampling_params:
+      strategy:
+        type: "greedy"
+      max_tokens: 4096
+    tools:
+      - name: "builtin::rag"
+        args:
+          vector_db_ids:
+            - "iac"
+    max_infer_iters: 1

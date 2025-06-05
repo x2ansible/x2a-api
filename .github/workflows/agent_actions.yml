@@ -99,14 +99,14 @@ jobs:
 
       - name: Package published successfully
         run: |
-          echo "🎉 Package published successfully!"
+          echo " Package published successfully!"
           echo ""
           echo "📦 Package Information:"
           echo "Registry: ${{ env.REGISTRY }}"
           echo "Organization: ${{ env.ORG }}"
           echo "Package: ${{ env.IMAGE_NAME }}"
           echo ""
-          echo "🏷️ Available Tags:"
+          echo " Available Tags:"
           echo "  Latest: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
           echo "  Version: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}"
           echo "  Date: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}"

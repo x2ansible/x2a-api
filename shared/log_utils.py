@@ -156,7 +156,7 @@ class ChefAnalysisLogger:
         """Log analysis completion with summary."""
         summary = self._create_analysis_summary(analysis_result)
         self.info(
-            f"🎉 Chef cookbook analysis completed",
+            f" Chef cookbook analysis completed",
             total_time_seconds=round(total_time, 3),
             **summary
         )
