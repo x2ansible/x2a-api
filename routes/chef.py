@@ -1,67 +1,56 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict
+from datetime import datetime
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
 
-from agents.chef_analysis.agent import create_chef_analysis_agent, ChefAnalysisAgent
-from config.config import ConfigLoader
+from agents.chef_analysis.agent import ChefAnalysisAgent
 
 router = APIRouter(prefix="/chef", tags=["chef-analysis"])
 
-config_loader = ConfigLoader("config.yaml")
-
-def get_chef_agent() -> ChefAnalysisAgent:
-    return create_chef_analysis_agent(config_loader)
-
 class ChefAnalyzeRequest(BaseModel):
-    cookbook_name: str
     files: Dict[str, str]
+
+# === Singleton dependency: this is all you need! ===
+def get_chef_agent(request: Request) -> ChefAnalysisAgent:
+    return request.app.state.chef_analysis_agent
 
 @router.post("/analyze")
 async def analyze_cookbook(
     request: ChefAnalyzeRequest,
     agent: ChefAnalysisAgent = Depends(get_chef_agent),
 ):
+    cookbook_name = f"uploaded_cookbook_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     cookbook_data = {
-        "name": request.cookbook_name,
+        "name": cookbook_name,
         "files": request.files,
     }
     try:
-        # Your existing working code - UNCHANGED
         result = await agent.analyze_cookbook(cookbook_data)
-        
-        # NEW: Just add session info to the response (for context agent workflow)
         result["session_info"] = {
-            "agent_id": agent.agent.agent_id,
-            "cookbook_name": request.cookbook_name
+            "cookbook_name": cookbook_name
         }
-        
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis error: {e}")
-
-from fastapi.responses import StreamingResponse
-import asyncio
-import json
 
 @router.post("/analyze/stream")
 async def analyze_cookbook_stream(
     request: ChefAnalyzeRequest,
     agent: ChefAnalysisAgent = Depends(get_chef_agent),
 ):
+    cookbook_name = f"uploaded_cookbook_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     async def event_generator():
-        agent_id = agent.agent.agent_id  # Get for session info
-        
         async for event in agent.analyze_cookbook_stream(
-            {"name": request.cookbook_name, "files": request.files}
+            {"name": cookbook_name, "files": request.files}
         ):
-            # NEW: Add session info to final streaming result
             if event.get("type") == "final_analysis" and "data" in event:
                 event["data"]["session_info"] = {
-                    "agent_id": agent_id,
-                    "cookbook_name": request.cookbook_name
+                    "cookbook_name": cookbook_name
                 }
-            
-            await asyncio.sleep(0.1)  # throttle for demo
+            await asyncio.sleep(0.1)
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(

@@ -110,7 +110,7 @@ def delete_duplicate_agents(llamastack_url, keep_latest=True):
             if delete_agent(llamastack_url, agent_id):
                 deleted_count += 1
     
-    print(f"\n🎉 Cleanup complete! Deleted {deleted_count} duplicate agents")
+    print(f"\n Cleanup complete! Deleted {deleted_count} duplicate agents")
 
 def delete_all_agents(llamastack_url, confirm=False):
     """Delete ALL agents (use with caution!)"""
@@ -134,7 +134,7 @@ def delete_all_agents(llamastack_url, confirm=False):
         if delete_agent(llamastack_url, agent_id):
             deleted_count += 1
     
-    print(f"\n🎉 Deleted {deleted_count} agents")
+    print(f"\n Deleted {deleted_count} agents")
 
 def get_llamastack_url_from_config():
     """Try to get LlamaStack URL from your config"""
@@ -153,7 +153,7 @@ def get_llamastack_url_from_config():
         pass
     
     # Fallback URL
-    return "http://localhost:8321"
+    return "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
 
 def main():
     parser = argparse.ArgumentParser(description="LlamaStack Agent Manager")

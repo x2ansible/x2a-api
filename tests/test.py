@@ -254,7 +254,7 @@ async def main():
     success = await tester.run_full_test()
     
     if success:
-        print("\n🎉 All tests passed! Your context agent can successfully fetch from chef sessions.")
+        print("\n All tests passed! Your context agent can successfully fetch from chef sessions.")
     else:
         print("\n💥 Tests failed. Check the logs above for details.")
         sys.exit(1)

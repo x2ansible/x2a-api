@@ -42,7 +42,7 @@ class ValidationResultFormatter:
                            original_playbook: str, lint_profile: str,
                            debug_info: Dict[str, Any]) -> Dict[str, Any]:
         """Format result when tool execution was successful."""
-        logger.info("🎉 Formatting successful tool result")
+        logger.info(" Formatting successful tool result")
         
         return {
             "success": True,

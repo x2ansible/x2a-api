@@ -1,17 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import asyncio
 import json
 import time
 import logging
+from datetime import datetime
 
-from agents.context_agent.context_agent import create_context_agent, ContextAgent
-from config.config import ConfigLoader
+from agents.context_agent.context_agent import ContextAgent
 
 router = APIRouter(prefix="/context", tags=["context-agent"])
-config_loader = ConfigLoader("config.yaml")
 logger = logging.getLogger("context_routes")
 
 def safe_json_serialize(obj):
@@ -33,18 +32,80 @@ def safe_json_serialize(obj):
         else:
             return json.dumps(str(obj))
 
-def get_context_agent() -> ContextAgent:
-    return create_context_agent(config_loader)
+def get_context_agent(request: Request) -> ContextAgent:
+    """Get ContextAgent from app state (Meta pattern)"""
+    if not hasattr(request.app.state, 'context_agent'):
+        raise HTTPException(status_code=503, detail="ContextAgent not available")
+    return request.app.state.context_agent
 
 class ContextRequest(BaseModel):
     code: str
     top_k: int = 5
+
+class ContextSearchRequest(BaseModel):
+    code: str
+    top_k: Optional[int] = 5
+
+# === MAIN ENDPOINTS ===
+
+@router.post("/search")
+async def search_context(
+    request: ContextSearchRequest,
+    agent: ContextAgent = Depends(get_context_agent),
+):
+    """Search for relevant context using the context agent"""
+    try:
+        result = await agent.query_context(
+            code=request.code,
+            top_k=request.top_k
+        )
+        
+        return {
+            "success": True,
+            "context": result["context"],
+            "metadata": {
+                "elapsed_time": result["elapsed_time"],
+                "correlation_id": result["correlation_id"],
+                "chunk_count": len(result["context"]),
+                "session_info": result.get("session_info", {}),
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Context search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Context search error: {e}")
+
+@router.post("/search/stream")
+async def search_context_stream(
+    request: ContextSearchRequest,
+    agent: ContextAgent = Depends(get_context_agent),
+):
+    """Stream context search results"""
+    async def event_generator():
+        async for event in agent.query_context_stream(
+            code=request.code,
+            top_k=request.top_k
+        ):
+            await asyncio.sleep(0.1)
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+# === LEGACY ENDPOINTS (for backward compatibility) ===
 
 @router.post("/query")
 async def query_context(
     request: ContextRequest,
     agent: ContextAgent = Depends(get_context_agent),
 ):
+    """Legacy endpoint - maintains old interface"""
     try:
         result = await agent.query_context(request.code, request.top_k)
         
@@ -65,17 +126,27 @@ async def query_context_stream(
     request: ContextRequest,
     agent: ContextAgent = Depends(get_context_agent),
 ):
+    """Legacy streaming endpoint - maintains old interface"""
     async def event_generator():
         start_time = time.time()
         
         try:
             # 1. Emit start event
-            start_event = {'event': 'start', 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'msg': 'Context search started'}
+            start_event = {
+                'event': 'start', 
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 
+                'msg': 'Context search started'
+            }
             yield f"data: {safe_json_serialize(start_event)}\n\n"
             await asyncio.sleep(0.1)
             
             # 2. Emit progress event
-            progress_event = {'event': 'progress', 'progress': 0.5, 'msg': 'Searching knowledge base...', 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+            progress_event = {
+                'event': 'progress', 
+                'progress': 0.5, 
+                'msg': 'Searching knowledge base...', 
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            }
             yield f"data: {safe_json_serialize(progress_event)}\n\n"
             await asyncio.sleep(0.2)
             
@@ -92,27 +163,28 @@ async def query_context_stream(
             }
             
             # 4. Emit result event
-            result_event = {'event': 'result', **clean_result, 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'processing_time': round(time.time() - start_time, 2)}
+            result_event = {
+                'event': 'result', 
+                **clean_result, 
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 
+                'processing_time': round(time.time() - start_time, 2)
+            }
             yield f"data: {safe_json_serialize(result_event)}\n\n"
             
         except Exception as e:
             logger.error(f"Context streaming error: {e}")
-            logger.exception("Full context streaming error:")
             
-            # Safely serialize the error message without any complex objects
+            # Safely serialize the error message
             error_msg = str(e)
-            if len(error_msg) > 500:  # Truncate very long error messages
+            if len(error_msg) > 500:
                 error_msg = error_msg[:500] + "..."
             
-            # Emit error event with safe string serialization
-            error_event = {'event': 'error', 'msg': f'Context search failed: {error_msg}', 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
-            try:
-                yield f"data: {safe_json_serialize(error_event)}\n\n"
-            except Exception as json_error:
-                # Last resort: emit a basic error message
-                logger.error(f"Failed to serialize error response: {json_error}")
-                basic_error = {'event': 'error', 'msg': 'Context search failed: Internal error', 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
-                yield f"data: {json.dumps(basic_error)}\n\n"
+            error_event = {
+                'event': 'error', 
+                'msg': f'Context search failed: {error_msg}', 
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            }
+            yield f"data: {safe_json_serialize(error_event)}\n\n"
     
     return StreamingResponse(
         event_generator(),
@@ -122,3 +194,41 @@ async def query_context_stream(
             "Connection": "keep-alive",
         },
     )
+
+# === STATUS AND HEALTH ENDPOINTS ===
+
+@router.get("/status")
+async def get_context_status(
+    agent: ContextAgent = Depends(get_context_agent),
+):
+    """Get context agent status"""
+    try:
+        return {
+            "status": "ready",
+            "agent_info": agent.get_status(),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Status check failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Status check failed: {e}")
+
+@router.post("/health")
+async def context_health_check(
+    agent: ContextAgent = Depends(get_context_agent),
+):
+    """Perform health check on context agent"""
+    try:
+        is_healthy = await agent.health_check()
+        return {
+            "healthy": is_healthy,
+            "agent_id": agent.agent_id,
+            "pattern": "Meta Direct API",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "healthy": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }

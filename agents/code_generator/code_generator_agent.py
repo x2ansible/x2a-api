@@ -1,14 +1,15 @@
 import logging
 import re
-from typing import Optional
+import uuid
+from typing import Optional, Dict, Any
 
-from llama_stack_client import Agent, LlamaStackClient
+from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import UserMessage
-from config.config import ConfigLoader
 
 logger = logging.getLogger("CodeGeneratorAgent")
 
 def _clean_playbook_output(output: str) -> str:
+    """Clean and normalize playbook output"""
     output = re.sub(r"(?m)^(```+|~~~+)[\w\-]*\n?", '', output)
     output = output.strip()
     if output.startswith("'''") and output.endswith("'''"):
@@ -27,105 +28,157 @@ def _clean_playbook_output(output: str) -> str:
 
 class CodeGeneratorAgent:
     """
-    LlamaStack-based agent for Ansible playbook generation.
-    Loads its instructions from config, hot-reloads on config change, and
-    robustly parses/cleans LLM output to always return usable playbook.
+    CodeGeneratorAgent following Meta's pattern - Direct LlamaStack API calls only
     """
-    def __init__(
-        self, 
-        config_loader: ConfigLoader, 
-        agent_id: str = "generate",  # matches your config.yaml!
-        timeout: int = 60
-    ):
-        self.config_loader = config_loader
+    def __init__(self, client: LlamaStackClient, agent_id: str, session_id: str, timeout: int = 60):
+        self.client = client
         self.agent_id = agent_id
-        all_agents = self.config_loader.get_agents_config()
-        agent_cfg = next((a for a in all_agents if a.get("name") == self.agent_id), {})
-        self.base_url = self.config_loader.get_llamastack_base_url()
-        self.model_id = agent_cfg.get("model") or "meta-llama/Llama-3.1-8B-Instruct"
+        self.session_id = session_id  # Default session
         self.timeout = timeout
-        self._last_instructions_hash = None
-        self.agent = None
-        self._initialize_agent()
-        logger.info(f"CodeGeneratorAgent initialized with model: {self.model_id}")
+        self.logger = logger
+        self.logger.info(f"🔧 CodeGeneratorAgent initialized with agent_id: {agent_id}")
 
-    def _get_current_instructions(self):
-        instructions = self.config_loader.get_agent_instructions(self.agent_id)
-        if not instructions:
-            logger.warning("No codegen instructions found, using fallback.")
-            return (
-                "You are an expert in Ansible. "
-                "Given INPUT CODE and CONTEXT, generate a single, production-ready Ansible playbook. "
-                "Use YAML comments for any essential explanation. "
-                "Output only the playbook and YAML comments—"
-                "do NOT use Markdown code blocks or code fences (e.g., no triple backticks). "
-                "Your response must start with '---' and contain no extra blank lines at the start or end."
-            )
-        return instructions
-
-    def _initialize_agent(self):
-        current_instructions = self._get_current_instructions()
-        self.client = LlamaStackClient(base_url=self.base_url)
-        self.agent = Agent(
-            client=self.client,
-            model=self.model_id,
-            instructions=current_instructions,
-        )
-        self._last_instructions_hash = hash(current_instructions)
-
-    def _check_and_reload_config(self):
+    def create_new_session(self, correlation_id: str) -> str:
+        """Create a new session for this specific generation request"""
         try:
-            current_instructions = self._get_current_instructions()
-            current_hash = hash(current_instructions)
-            if current_hash != self._last_instructions_hash:
-                logger.info("CodeGeneratorAgent instructions changed, reloading agent.")
-                self._initialize_agent()
+            response = self.client.agents.session.create(
+                agent_id=self.agent_id,
+                session_name=f"code-generation-{correlation_id}-{uuid.uuid4()}",
+            )
+            session_id = response.session_id
+            self.logger.info(f" Created new session: {session_id} for correlation: {correlation_id}")
+            return session_id
         except Exception as e:
-            logger.error(f"Failed to check/reload codegen agent config: {e}")
+            self.logger.error(f" Failed to create session: {e}")
+            # Fallback to default session
+            self.logger.info(f"↩️  Falling back to default session: {self.session_id}")
+            return self.session_id
 
-    async def generate(self, input_code: str, context: Optional[str] = "") -> str:
-        self._check_and_reload_config()
+    async def generate(self, input_code: str, context: Optional[str] = "", correlation_id: Optional[str] = None) -> str:
+        """Generate Ansible playbook from input code and context"""
+        correlation_id = correlation_id or str(uuid.uuid4())
+        
         prompt = (
-            f"[CONTEXT]\n{context}\n\n"
+            f"[CONTEXT]\n{context or ''}\n\n"
             f"[INPUT CODE]\n{input_code}\n\n"
             "Convert the above into a single production-quality Ansible playbook. "
             "Output only the YAML (no Markdown, no code fences, no extra document markers). "
             "Start with '---'."
         )
+        
+        self.logger.info(f"🔧 Generating playbook for: {repr(input_code)[:100]}...")
+        
         try:
-            session_id = self.agent.create_session("code_generation")
-            turn = self.agent.create_turn(
-                session_id=session_id,
-                messages=[UserMessage(role="user", content=prompt)],
-                stream=False,
+            # Create dedicated session for this generation
+            generation_session_id = self.create_new_session(correlation_id)
+
+            # Direct API call following Meta's pattern
+            messages = [UserMessage(role="user", content=prompt)]
+            
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=generation_session_id,
+                messages=messages,
+                stream=True,
             )
-            output = None
-            if hasattr(turn, 'output_message') and hasattr(turn.output_message, 'content'):
-                output = turn.output_message.content
-            elif hasattr(turn, 'content'):
-                output = turn.content
-            elif isinstance(turn, str):
-                output = turn
-            else:
-                output = ""
-                if hasattr(turn, 'steps') and turn.steps:
-                    for step in turn.steps:
-                        if hasattr(step, 'content'):
-                            output += str(step.content)
-                        elif hasattr(step, 'output'):
-                            output += str(step.output)
-                if not output.strip():
-                    output = str(turn)
-            output = _clean_playbook_output(str(output))
+            
+            # Process streaming response
+            turn = None
+            for chunk in generator:
+                event = chunk.event
+                event_type = event.payload.event_type
+                if event_type == "turn_complete":
+                    turn = event.payload.turn
+                    break
+            
+            if not turn:
+                self.logger.error(" No turn completed in response")
+                raise RuntimeError("No turn completed in generation")
+
+            # Log steps for debugging
+            self.logger.info(f" Turn completed with {len(turn.steps)} steps")
+            for i, step in enumerate(turn.steps):
+                self.logger.info(f"📋 Step {i+1}: {step.step_type}")
+
+            # Extract output
+            output = turn.output_message.content
+            
             if not output:
+                self.logger.error(" LLM returned empty output")
                 raise RuntimeError("LLM returned empty output")
-            return output
+            
+            # Clean and format the playbook
+            cleaned_output = _clean_playbook_output(output)
+            
+            self.logger.info(f" Generated playbook: {len(cleaned_output)} chars")
+            return cleaned_output
+            
         except Exception as e:
-            logger.exception(f"Error in CodeGeneratorAgent.generate: {e}")
+            self.logger.error(f" Playbook generation failed: {str(e)}")
             raise RuntimeError(f"Playbook generation failed: {str(e)}")
 
+    async def generate_stream(self, input_code: str, context: Optional[str] = "", correlation_id: Optional[str] = None):
+        """Generate playbook with streaming updates"""
+        correlation_id = correlation_id or str(uuid.uuid4())
+        
+        try:
+            yield {
+                "type": "progress",
+                "status": "processing",
+                "message": "🔧 Code generation started",
+                "agent_info": {
+                    "agent_id": self.agent_id,
+                    "correlation_id": correlation_id
+                }
+            }
 
-def create_codegen_agent(config_loader: Optional[ConfigLoader] = None):
-    if config_loader is None:
-        config_loader = ConfigLoader("config.yaml")
-    return CodeGeneratorAgent(config_loader)
+            result = await self.generate(input_code, context, correlation_id)
+            
+            yield {
+                "type": "final_playbook",
+                "data": {
+                    "playbook": result,
+                    "correlation_id": correlation_id,
+                    "session_info": {
+                        "agent_id": self.agent_id
+                    }
+                }
+            }
+        except Exception as e:
+            yield {
+                "type": "error",
+                "error": str(e),
+                "correlation_id": correlation_id
+            }
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current status of the code generator agent"""
+        return {
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "client_base_url": self.client.base_url,
+            "timeout": self.timeout,
+            "status": "ready",
+            "pattern": "Meta Direct API"
+        }
+
+    async def health_check(self) -> bool:
+        """Perform a health check on the code generator agent"""
+        try:
+            messages = [UserMessage(role="user", content="Health check")]
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=self.session_id,
+                messages=messages,
+                stream=True,
+            )
+            
+            # Just check if we can create a turn without errors
+            for chunk in generator:
+                break  # Just need first chunk to verify connection works
+            
+            self.logger.info(" Code generator health check passed")
+            return True
+        except Exception as e:
+            self.logger.error(f" Code generator health check failed: {e}")
+            return False

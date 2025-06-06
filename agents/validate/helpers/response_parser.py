@@ -106,7 +106,7 @@ class ValidationResponseParser:
             logger.info(f"   - Response type: {type(response)}")
             
             if validation_result:
-                logger.info("🎉 Successfully extracted validation result!")
+                logger.info(" Successfully extracted validation result!")
             else:
                 logger.warning("⚠️ No validation result found")
                 if tool_results:

@@ -1,47 +1,46 @@
 import time
+import uuid
 from typing import Dict, Any, Optional, AsyncGenerator
 import logging
-
-from agents.agent import AgentManager
-from config.config import ConfigLoader
-from llama_stack_client import Agent, LlamaStackClient
+from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import UserMessage
 
-# Utility modules
 from agents.chef_analysis.utils import create_correlation_id
 from agents.chef_analysis.processor import extract_and_validate_analysis
-from shared.exceptions import (
-    LLMServiceError,
-    TimeoutError,
-    ConfigurationError,
-    JSONParseError,
-    CookbookAnalysisError
-)
+from shared.exceptions import ConfigurationError, CookbookAnalysisError
 from shared.log_utils import create_chef_logger, ChefAnalysisLogger, step_printer
 
 logger = logging.getLogger(__name__)
 
 class ChefAnalysisAgent:
-    def __init__(self, client: Any, model: str, instructions: str, timeout: int = 120):
-        self.timeout = timeout
+    """
+    ChefAnalysisAgent - Fixed version that works with single agent instance
+    """
+    def __init__(self, client: LlamaStackClient, agent_id: str, session_id: str, timeout: int = 120):
         self.client = client
-        self.model = model
-        self.instructions = instructions
+        self.agent_id = agent_id
+        self.session_id = session_id  # Default session
+        self.timeout = timeout
         self.logger = create_chef_logger("init")
-        self._initialize_agent()
-        self.logger.info(f"Chef Analysis Agent initialized successfully | Model: {self.model}")
+        self.logger.info(f"🍳 ChefAnalysisAgent initialized with agent_id: {agent_id}, session_id: {session_id}")
 
-    def _initialize_agent(self):
+    def create_new_session(self, correlation_id: str) -> str:
+        """
+        Create a new session for this specific analysis
+        """
         try:
-            self.agent = Agent(
-                client=self.client,
-                model=self.model,
-                instructions=self.instructions
+            response = self.client.agents.session.create(
+                agent_id=self.agent_id,
+                session_name=f"chef-analysis-{correlation_id}-{uuid.uuid4()}",
             )
-            self.logger.info("Chef Analysis Agent initialized")
+            session_id = response.session_id
+            self.logger.info(f" Created new session: {session_id} for correlation: {correlation_id}")
+            return session_id
         except Exception as e:
-            self.logger.error(f"Failed to initialize agent: {e}")
-            raise ConfigurationError(f"Agent initialization failed: {e}")
+            self.logger.error(f" Failed to create session: {e}")
+            # Fallback to default session
+            self.logger.info(f"↩️  Falling back to default session: {self.session_id}")
+            return self.session_id
 
     async def analyze_cookbook(
         self,
@@ -64,16 +63,23 @@ class ChefAnalysisAgent:
             cookbook_content = self._format_cookbook_content(cookbook_name, files)
             logger.info(f"📄 Formatted cookbook: {len(cookbook_content)} chars")
 
+            # Create dedicated session for this analysis
+            analysis_session_id = self.create_new_session(correlation_id)
+
             analysis_result = await self._analyze_with_retries(
-                cookbook_content, correlation_id, logger
+                cookbook_content, correlation_id, logger, analysis_session_id
             )
 
             total_time = time.time() - start_time
             logger.log_analysis_completion(analysis_result, total_time)
 
-            # --- FIX: Attach actual cookbook_name always in the result ---
             if isinstance(analysis_result, dict):
                 analysis_result["cookbook_name"] = cookbook_name
+                analysis_result["session_info"] = {
+                    "agent_id": self.agent_id,
+                    "session_id": analysis_session_id,
+                    "correlation_id": correlation_id
+                }
             return analysis_result
 
         except Exception as e:
@@ -88,75 +94,85 @@ class ChefAnalysisAgent:
             content_parts.append(content.strip())
         return "\n".join(content_parts)
 
-    async def _analyze_with_retries(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger) -> Dict[str, Any]:
-        # Attempt 1: Direct JSON request
+    async def _analyze_with_retries(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger, session_id: str) -> Dict[str, Any]:
         try:
             logger.info("🔄 Attempt 1: Direct JSON analysis")
-            result = await self._analyze_like_classifier(cookbook_content, correlation_id, logger)
+            result = await self._analyze_direct(cookbook_content, correlation_id, logger, session_id, "direct")
             if result and result.get("success") and not result.get("postprocess_error"):
                 logger.info(" Direct analysis succeeded")
                 return result
             else:
-                logger.warning(f" Direct analysis failed: {result}")
+                logger.warning(f"⚠️ Direct analysis failed: {result}")
         except Exception as e:
-            logger.warning(f" Attempt 1 failed with exception: {e}")
+            logger.warning(f"⚠️ Attempt 1 failed with exception: {e}")
 
-        # Attempt 2: Simple prompt
         try:
             logger.info("🔄 Attempt 2: Simple analysis")
-            result = await self._try_simple_analysis(cookbook_content, correlation_id, logger)
+            result = await self._analyze_direct(cookbook_content, correlation_id, logger, session_id, "simple")
             if result and result.get("success") and not result.get("postprocess_error"):
                 logger.info(" Simple analysis succeeded")
                 return result
             else:
-                logger.warning(f" Simple analysis failed: {result}")
+                logger.warning(f"⚠️ Simple analysis failed: {result}")
         except Exception as e:
-            logger.warning(f" Attempt 2 failed with exception: {e}")
+            logger.warning(f"⚠️ Attempt 2 failed with exception: {e}")
 
         logger.warning("⚠️ LLM analysis failed - processor will handle intelligent fallback")
         return extract_and_validate_analysis("{}", correlation_id, cookbook_content)
 
-    async def _analyze_like_classifier(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger) -> Optional[Dict[str, Any]]:
-        prompt = f"""Analyze this Chef cookbook and return ONLY valid JSON.
+    async def _analyze_direct(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger, session_id: str, analysis_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Direct analysis using correct LlamaStack API - NO attachments parameter
+        """
+        if analysis_type == "direct":
+            prompt = f"""Analyze this Chef cookbook and return ONLY valid JSON.
 <COOKBOOK>
 {cookbook_content}
 </COOKBOOK>
 CRITICAL: Return ONLY the JSON object with your actual analysis values."""
-        try:
-            session_id = self.agent.create_session(f"chef_analysis_{correlation_id}")
-            logger.info(f" Created session: {session_id}")
-            turn = self.agent.create_turn(
-                session_id=session_id,
-                messages=[UserMessage(role="user", content=prompt)],
-                stream=False
-            )
-            step_printer(turn.steps)
-            raw_response = turn.output_message.content
-            logger.info(f" Received response: {len(raw_response)} chars")
-            result = extract_and_validate_analysis(raw_response, correlation_id, cookbook_content)
-            logger.info(f" Processor returned: success={result.get('success')}")
-            return result
-        except Exception as e:
-            logger.error(f" ClassifierAgent-style analysis failed: {e}")
-            return None
-
-    async def _try_simple_analysis(self, cookbook_content: str, correlation_id: str, logger: ChefAnalysisLogger) -> Optional[Dict[str, Any]]:
-        prompt = f"""Analyze this Chef cookbook:
+        else:
+            prompt = f"""Analyze this Chef cookbook:
 {cookbook_content}
 CRITICAL: Replace ALL instruction text with your actual analysis values."""
+
         try:
-            session_id = self.agent.create_session(f"simple_{correlation_id}")
-            turn = self.agent.create_turn(
+            messages = [UserMessage(role="user", content=prompt)]
+            
+            # FIXED: Use correct API without attachments parameter
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
                 session_id=session_id,
-                messages=[UserMessage(role="user", content=prompt)],
-                stream=False
+                messages=messages,
+                stream=True,
             )
+            
+            # Process streaming response
+            turn = None
+            for chunk in generator:
+                event = chunk.event
+                event_type = event.payload.event_type
+                if event_type == "turn_complete":
+                    turn = event.payload.turn
+                    break
+            
+            if not turn:
+                logger.error(" No turn completed in response")
+                return None
+            
+            # Log steps for debugging
+            logger.info(f" Turn completed with {len(turn.steps)} steps")
+            for i, step in enumerate(turn.steps):
+                logger.info(f"📋 Step {i+1}: {step.step_type}")
+            
             raw_response = turn.output_message.content
-            logger.info(f"📥 Simple response: {len(raw_response)} chars")
+            logger.info(f"📥 Received {analysis_type} response: {len(raw_response)} chars")
+            
             result = extract_and_validate_analysis(raw_response, correlation_id, cookbook_content)
+            logger.info(f"🔍 Processor returned: success={result.get('success')}")
             return result
+            
         except Exception as e:
-            logger.error(f" Simple analysis failed: {e}")
+            logger.error(f" {analysis_type.capitalize()} analysis failed: {e}")
             return None
 
     async def analyze_cookbook_stream(
@@ -164,20 +180,21 @@ CRITICAL: Replace ALL instruction text with your actual analysis values."""
         cookbook_data: Dict[str, Any],
         correlation_id: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Streaming analysis, yields events. 
-        """
         correlation_id = correlation_id or create_correlation_id()
         cookbook_name = cookbook_data.get("name", "unknown")
+        
         try:
             yield {
                 "type": "progress",
-                "status": "processing", 
-                "message": "Chef cookbook analysis started"
+                "status": "processing",
+                "message": "🍳 Chef cookbook analysis started",
+                "agent_info": {
+                    "agent_id": self.agent_id,
+                    "correlation_id": correlation_id
+                }
             }
 
             result = await self.analyze_cookbook(cookbook_data, correlation_id)
-            # --- FIX: Always attach cookbook_name in streaming result too ---
             if isinstance(result, dict):
                 result["cookbook_name"] = cookbook_name
 
@@ -193,19 +210,39 @@ CRITICAL: Replace ALL instruction text with your actual analysis values."""
                 "correlation_id": correlation_id
             }
 
-def create_chef_analysis_agent(config_loader: ConfigLoader) -> ChefAnalysisAgent:
-    # Get config values
-    base_url = config_loader.get_llamastack_base_url()
-    model = config_loader.get_llamastack_model()
-    instructions = None
-    # Get instructions for this agent
-    for agent in config_loader.get_agents_config():
-        if agent["name"] == "chef_analysis":
-            instructions = agent["instructions"]
-    timeout = 120  # Use more robust value or config if needed
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get current status of the agent
+        """
+        return {
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "client_base_url": self.client.base_url,
+            "timeout": self.timeout,
+            "status": "ready"
+        }
 
-    if not base_url or not model or not instructions:
-        raise ConfigurationError("Missing configuration for ChefAnalysisAgent")
-
-    client = LlamaStackClient(base_url=base_url.rstrip('/'))
-    return ChefAnalysisAgent(client=client, model=model, instructions=instructions, timeout=timeout)
+    async def health_check(self) -> bool:
+        """
+        Perform a health check on the agent
+        """
+        try:
+            # Simple health check by creating a minimal turn
+            messages = [UserMessage(role="user", content="Health check")]
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=self.session_id,
+                messages=messages,
+                stream=True,
+            )
+            
+            # Just check if we can create a turn without errors
+            for chunk in generator:
+                # Just need first chunk to verify connection works
+                break
+            
+            self.logger.info(" Health check passed")
+            return True
+        except Exception as e:
+            self.logger.error(f" Health check failed: {e}")
+            return False

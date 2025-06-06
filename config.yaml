@@ -2,6 +2,17 @@ llamastack:
   base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
   default_model: "meta-llama/Llama-3.1-8B-Instruct"
 
+# File storage configuration
+file_storage:
+  upload_dir: "./uploads"
+  max_file_size: 10485760  # 10MB
+  allowed_extensions: [".rb", ".yml", ".yaml", ".json", ".tf", ".pp", ".erb", ".conf"]
+
+# Vector database configuration
+vector_db:
+  default_db_id: "iac"
+  default_chunk_size: 512
+
 agent_instructions:
   chef_analysis: |
     You are a Chef cookbook analyzer. Analyze the provided Chef cookbook and return JSON analysis.
@@ -87,7 +98,6 @@ agent_instructions:
     4. Only summarize and explain the output; never invent validation results.
     5. Be clear, actionable, and educational in your advice.
 
-
 agents:
   - name: "chef_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -114,9 +124,10 @@ agents:
           vector_db_ids:
             - "iac"
     max_infer_iters: 1
+    
   - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.context}"
+    instructions: "{agent_instructions.generate}"  # Fixed: was using context instead of generate
     sampling_params:
       strategy:
         type: "greedy"
@@ -127,6 +138,7 @@ agents:
           vector_db_ids:
             - "iac"
     max_infer_iters: 1
+    
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
     instructions: "{agent_instructions.validate}"    
