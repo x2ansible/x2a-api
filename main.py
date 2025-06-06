@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from routes.admin import router as admin_router
 from routes.chef import router as chef_router
 from routes.context import router as context_router
 from routes.generate import router as generate_router
@@ -47,6 +48,7 @@ app.add_middleware(
 )
 
 # -- Include routers from the agent packages --
+app.include_router(admin_router)
 app.include_router(chef_router)
 app.include_router(context_router)
 app.include_router(generate_router)
