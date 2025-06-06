@@ -186,9 +186,7 @@ Generates automation code, configurations, and infrastructure definitions.
 
 **Capabilities:**
 - Ansible playbook generation
-- Terraform configuration creation
-- Kubernetes manifest generation
-- Configuration template creation
+
 
 ### Validate Agent (`/validate/*`)
 Validates automation code, configurations, and infrastructure definitions.
@@ -284,42 +282,14 @@ All context agent endpoints augment LLM responses with retrieved knowledge:
 #### POST /generate/ansible
 Generate Ansible playbooks from requirements.
 
-#### POST /generate/terraform
-Generate Terraform configurations.
-
-#### POST /generate/kubernetes
-Generate Kubernetes manifests.
 
 #### POST /generate/templates
 Generate configuration templates.
 
-### Validate Agent (`/validate`)
-
-#### POST /validate/ansible
-Validate Ansible playbooks and roles.
-
-#### POST /validate/terraform
-Validate Terraform configurations.
-
-#### POST /validate/kubernetes
-Validate Kubernetes manifests.
-
-#### POST /validate/security
-Perform security policy validation.
-
 ### Deploy Agent (`/deploy`)
-
-#### POST /deploy/plan
-Create deployment execution plans.
 
 #### POST /deploy/execute
 Execute deployment workflows.
-
-#### POST /deploy/rollback
-Generate rollback strategies.
-
-#### POST /deploy/status
-Monitor deployment status and progress.
 
 ## Platform Features
 
