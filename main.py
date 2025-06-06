@@ -7,16 +7,16 @@ from contextlib import asynccontextmanager
 from routes.admin import router as admin_router
 from routes.chef import router as chef_router
 from routes.context import router as context_router
-from routes.files import router as files_router  # NEW
+from routes.files import router as files_router
 from routes.generate import router as generate_router
 from routes.validate import router as validate_router
-from routes.vector_db import router as vector_db_router  # NEW
+from routes.vector_db import router as vector_db_router
 from agents.agent import AgentManager
 from config.config import ConfigLoader
 
 # Import router setup functions
-from routes.files import set_upload_dir  # NEW
-from routes.vector_db import set_vector_db_client  # NEW
+from routes.files import set_upload_dir
+from routes.vector_db import set_vector_db_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     set_upload_dir(upload_dir)
     logger.info(f"File upload directory set to: {upload_dir}")
     
-    # Initialize vector DB client (if you want to use it)
+    # Initialize vector DB client
     try:
         from llama_stack_client import LlamaStackClient
         vector_client = LlamaStackClient(base_url=llamastack_base_url)
@@ -70,13 +70,13 @@ app.add_middleware(
 )
 
 # -- Include routers from the agent packages --
-app.include_router(admin_router)
-app.include_router(chef_router)
-app.include_router(context_router)
-app.include_router(files_router)        # NEW
-app.include_router(generate_router)
-app.include_router(validate_router)
-app.include_router(vector_db_router)    # NEW
+app.include_router(admin_router, prefix="/api")
+app.include_router(chef_router, prefix="/api")
+app.include_router(context_router, prefix="/api")
+app.include_router(files_router, prefix="/api")
+app.include_router(generate_router, prefix="/api")
+app.include_router(validate_router, prefix="/api")
+app.include_router(vector_db_router, prefix="/api")
 
 @app.get("/")
 async def root():

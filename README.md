@@ -20,14 +20,14 @@ Each response emits events in real time, perfect for UI feedback and automation.
 **POST** `/chef/analyze/stream`
 
 ```bash
-curl -N -X POST http://localhost:8000/chef/analyze/stream \
+curl -N -X POST http://localhost:8000/api/chef/analyze/stream \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
     "cookbook_name": "demo_cookbook",
     "files": {
-      "metadata.rb": "name \"demo_cookbook\"\ndepends \"httpd\"",
-      "recipes/default.rb": "package \"httpd\" do\n  action :install\nend\nservice \"httpd\" do\n  action [:enable, :start]\nend"
+      "metadata.rb": "name \"demo_cookbook\"",
+      "recipes/default.rb": "package \"httpd\" do\n  action :install\nend"
     }
   }'
 ```
@@ -47,7 +47,7 @@ data: {"type": "final_analysis", "data": { "success": true, "cookbook_name": "de
 **POST** `/context/query/stream`
 
 ```bash
-curl -N -X POST http://localhost:8000/context/query/stream \
+curl -N -X POST http://localhost:8000/api/context/query/stream \
   -H "Content-Type: application/json" \
   -d '{
     "code": "nginx",
@@ -76,7 +76,7 @@ data: {"event": "result", "context": [
 **POST** `/generate/playbook/stream`
 
 ```bash
-curl -N -X POST http://localhost:8000/generate/playbook/stream \
+curl -N -X POST http://localhost:8000/api/generate/playbook/stream \
   -H "Content-Type: application/json" \
   -d '{
     "input_code": "package { \"httpd\": ensure => present }",
@@ -103,7 +103,7 @@ data: {"event": "result", "playbook": "---\n# This playbook installs the httpd p
 **POST** `/validate/playbook/stream`
 
 ```bash
-curl -N -X POST http://localhost:8000/validate/playbook/stream \
+curl -N -X POST http://localhost:8000/api/validate/playbook/stream \
   -H "Content-Type: application/json" \
   -d '{
     "playbook": "---\n- name: Hello World Playbook\n  hosts: localhost\n  tasks:\n    - name: Print hello message\n      debug:\n        msg: \"hello world!\"",
