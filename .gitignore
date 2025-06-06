@@ -1,1 +1,32 @@
-venv
+venv# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+lib/
+lib64/
+*.egg
+*.egg-info
+.venv
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Logs
+*.log
+!npm-debug.log*
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.bak
+*.swo
