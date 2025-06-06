@@ -3,3 +3,8 @@ httpx
 uvicorn
 pyyaml
 pydantic
+gunicorn
+llama-stack-client
+requests
+fastmcp
+fire

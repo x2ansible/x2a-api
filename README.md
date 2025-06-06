@@ -4,6 +4,133 @@
 
 The X2A API is a comprehensive FastAPI application that provides AI-powered agents for infrastructure automation tasks. The platform hosts multiple specialized agents that handle different aspects of infrastructure management, migration, and automation. Each agent leverages LlamaStack for AI-powered analysis, with some agents utilizing Retrieval-Augmented Generation (RAG) for enhanced context and knowledge integration.
 
+
+## How to use 
+
+### Streaming Agent API Examples
+
+All endpoints support Server-Sent Events (SSE).
+Each response emits events in real time, perfect for UI feedback and automation.
+
+
+
+
+### 1. Chef Cookbook Analysis (Streaming)
+
+**POST** `/chef/analyze/stream`
+
+```bash
+curl -N -X POST http://localhost:8000/chef/analyze/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "cookbook_name": "demo_cookbook",
+    "files": {
+      "metadata.rb": "name \"demo_cookbook\"\ndepends \"httpd\"",
+      "recipes/default.rb": "package \"httpd\" do\n  action :install\nend\nservice \"httpd\" do\n  action [:enable, :start]\nend"
+    }
+  }'
+```
+
+**Example Streamed Response**
+
+```text
+data: {"type": "progress", "status": "processing", "message": "Chef cookbook analysis started"}
+
+data: {"type": "final_analysis", "data": { "success": true, "cookbook_name": "demo_cookbook", ... }, "correlation_id": "a9e60266"}
+```
+
+---
+
+### 2. Query Context (Streaming)
+
+**POST** `/context/query/stream`
+
+```bash
+curl -N -X POST http://localhost:8000/context/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "nginx",
+    "top_k": 3
+  }'
+```
+
+**Example Streamed Response**
+
+```text
+data: {"event": "start", "timestamp": "2025-06-06T02:28:59Z", "msg": "Context search started"}
+
+data: {"event": "progress", "progress": 0.5, "msg": "Searching knowledge base...", "timestamp": "2025-06-06T02:28:59Z"}
+
+data: {"event": "result", "context": [
+  { "text": "Result 1\nContent: # Puppet to Ansible File Management\n..." },
+  { "text": "Result 2\nContent: # Chef to Ansible Package Installation\n..." },
+  { "text": "Result 3\nContent: Chef to Ansible Conversion Guide\n..." }
+], "elapsed_time": 19.60, "correlation_id": "fe99b4bf-0282-4392-b9ef-b703c03578dd", "timestamp": "2025-06-06T02:29:19Z", "processing_time": 19.91}
+```
+
+---
+
+### 3. Generate Playbook (Streaming)
+
+**POST** `/generate/playbook/stream`
+
+```bash
+curl -N -X POST http://localhost:8000/generate/playbook/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_code": "package { \"httpd\": ensure => present }",
+    "context": "Convert this Puppet resource to Ansible"
+  }'
+```
+
+**Example Streamed Response**
+
+```text
+data: {"event": "start", "timestamp": "2025-06-06T02:20:55Z", "msg": "Generation started"}
+
+data: {"event": "progress", "progress": 0.5, "msg": "Generating playbook...", "timestamp": "2025-06-06T02:20:55Z"}
+
+data: {"event": "result", "playbook": "---\n# This playbook installs the httpd package on a Linux system\n# It uses the Ansible package module to ensure the package is present\n\n- name: Install httpd package\n  hosts: all\n  become: yes\n\n  tasks:\n  - name: Install httpd package\n    package:\n      name: httpd\n      state: present\n", "timestamp": "2025-06-06T02:20:59Z", "processing_time": 4.95}
+```
+
+---
+
+
+
+### 4. Validate Playbook (Streaming)
+
+**POST** `/validate/playbook/stream`
+
+```bash
+curl -N -X POST http://localhost:8000/validate/playbook/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "playbook": "---\n- name: Hello World Playbook\n  hosts: localhost\n  tasks:\n    - name: Print hello message\n      debug:\n        msg: \"hello world!\"",
+    "profile": "basic"
+  }'
+```
+
+**Example Streamed Response**
+
+```text
+data: {"event": "start", "timestamp": "2025-06-06T02:17:01Z", "msg": "Validation started"}
+
+data: {"event": "progress", "progress": 0.5, "msg": "Agent analyzing playbook with tool...", "timestamp": "2025-06-06T02:17:01Z"}
+
+data: {"event": "result", "success": true, "validation_passed": false, "exit_code": 2, "message": "Playbook validation failed with 2 issue(s)", ... }
+```
+
+---
+
+## Tips for Using Streaming Endpoints
+
+* Use `curl -N` or a compatible HTTP client to see events as they arrive.
+* Each event is delivered as a separate line:
+  `data: { ... }`
+* Parse each line as JSON for programmatic consumption or real-time UI updates.
+
+
 ## Architecture
 
 ### Platform Components
