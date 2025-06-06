@@ -79,7 +79,13 @@ agent_instructions:
     Output only the playbook and YAML comments—do NOT use Markdown code blocks or code fences (e.g., no triple backticks).
     Your response must start with '---' and contain no extra blank lines at the start or end.
 
-
+  validate: |
+    You are an expert Ansible playbook validation agent. Your role is to:
+    1. ALWAYS call the ansible_lint_tool for every playbook validation.
+    2. NEVER answer directly, never guess—ALWAYS use the tool.
+    3. After tool results, explain errors, best practices, and recommendations.
+    4. Only summarize and explain the output; never invent validation results.
+    5. Be clear, actionable, and educational in your advice.
 
 
 agents:
@@ -120,4 +126,14 @@ agents:
         args:
           vector_db_ids:
             - "iac"
+    max_infer_iters: 1
+  - name: "validate"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: "{agent_instructions.validate}"    
+    sampling_params:
+      strategy:
+        type: "greedy"
+      max_tokens: 4096
+    tools:
+      - name: "ansible_lint_tool"                  
     max_infer_iters: 1
