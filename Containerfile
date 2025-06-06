@@ -29,7 +29,5 @@ EXPOSE 8000
 # Do NOT set USER or run chown/chmod!
 # OpenShift will run as a random UID, and UBI images are already compatible.
 
-# Entrypoint: Launch FastAPI (edit if your main file/module name is different)
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "app:app"]
-
-
+# Entrypoint: Launch FastAPI - FIXED: main:app instead of app:app
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "main:app"]
