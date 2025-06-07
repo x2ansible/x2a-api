@@ -12,7 +12,7 @@ logger = logging.getLogger("ValidationAgent")
 
 class ValidationAgent:
     """
-    ValidationAgent following Meta's pattern - Direct LlamaStack API calls only
+    ValidationAgent - Direct LlamaStack API calls only
     """
     def __init__(self, client: LlamaStackClient, agent_id: str, session_id: str, timeout: int = 30):
         self.client = client
@@ -56,7 +56,7 @@ Always call the tool first, then provide a comprehensive analysis of the results
             # Create dedicated session for this validation
             validation_session_id = self.create_new_session(correlation_id)
 
-            # Direct API call following Meta's pattern
+            # Direct LSS API call 
             messages = [UserMessage(role="user", content=prompt)]
             
             # Add timeout using asyncio
@@ -291,7 +291,7 @@ Always call the tool first, then provide a comprehensive analysis of the results
             "client_base_url": self.client.base_url,
             "timeout": self.timeout,
             "status": "ready",
-            "pattern": "Meta Direct API"
+            "pattern": "LSS API"
         }
 
     async def health_check(self) -> bool:

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/generate", tags=["code-generator"])
 logger = logging.getLogger("codegen_routes")
 
 def get_codegen_agent(request: Request) -> CodeGeneratorAgent:
-    """Get CodeGeneratorAgent from app state (Meta pattern)"""
+    """Get CodeGeneratorAgent from app state (LSS API)"""
     if not hasattr(request.app.state, 'codegen_agent'):
         raise HTTPException(status_code=503, detail="CodeGeneratorAgent not available")
     return request.app.state.codegen_agent
@@ -157,7 +157,7 @@ async def codegen_health_check(
         return {
             "healthy": is_healthy,
             "agent_id": agent.agent_id,
-            "pattern": "Meta Direct API",
+            "pattern": "LSS API",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

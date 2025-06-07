@@ -35,7 +35,7 @@ from llama_stack_client import LlamaStackClient
 from llama_stack_client.types.agent_create_params import AgentConfig
 
 class AgentRegistry:
-    """Complete Meta Pattern Agent Registry - Prevents duplicates for ALL agents"""
+    """Complete  Agent Registry - Prevents duplicates for ALL agents"""
     def __init__(self, client: LlamaStackClient):
         self.client = client
         self.agents = {}  # agent_name -> agent_id
@@ -222,8 +222,8 @@ async def lifespan(app: FastAPI):
     
     logger.info(f"🔗 Connected to LlamaStack: {llamastack_base_url}")
 
-    # === Register ALL agents through AgentRegistry (Meta Pattern) ===
-    logger.info("🤖 Registering all agents through Meta pattern...")
+    # === Register ALL agents through AgentRegistry () ===
+    logger.info("🤖 Registering all agents ...")
     
     registered_agents = {}
     
@@ -358,7 +358,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="X2A Agents API",
     version="1.0.0", 
-    description="Multi-agent IaC API - Complete Meta Pattern (No Duplicates for ALL agents)",
+    description="Multi-agent IaC API - Complete  (No Duplicates for ALL agents)",
     lifespan=lifespan
 )
 
@@ -385,10 +385,10 @@ async def root():
     
     return {
         "status": "ok",
-        "message": " Welcome to X2A multi-agent API - Complete Meta Pattern!",
+        "message": " Welcome to X2A multi-agent API - Complete !",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Meta LlamaStack Direct API",
+        "agent_pattern": "LSS API",
         "duplicate_prevention": "Active for ALL agents",
         "services": [
             "admin - Agent management",
@@ -417,7 +417,7 @@ async def get_agents_status():
             "agent_id": info["agent_id"],
             "session_id": info["session_id"],
             "status": "ready",
-            "pattern": "Meta Direct API"
+            "pattern": "LSS API"
         }
     
     # Add specialized agent info
@@ -439,7 +439,7 @@ async def get_agents_status():
         "agents": agent_details,
         "specialized_agents": specialized_agents,
         "llamastack_url": llamastack_base_url,
-        "pattern": "Complete Meta Pattern",
+        "pattern": "Complete ",
         "duplicate_prevention": "Active for ALL agents",
         "summary": {
             "total_agents": len(registry_status["agents"]),

@@ -33,7 +33,7 @@ def safe_json_serialize(obj):
             return json.dumps(str(obj))
 
 def get_context_agent(request: Request) -> ContextAgent:
-    """Get ContextAgent from app state (Meta pattern)"""
+    """Get ContextAgent from app state (LSS API)"""
     if not hasattr(request.app.state, 'context_agent'):
         raise HTTPException(status_code=503, detail="ContextAgent not available")
     return request.app.state.context_agent
@@ -222,7 +222,7 @@ async def context_health_check(
         return {
             "healthy": is_healthy,
             "agent_id": agent.agent_id,
-            "pattern": "Meta Direct API",
+            "pattern": "LSS API",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

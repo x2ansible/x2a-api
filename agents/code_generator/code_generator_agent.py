@@ -28,7 +28,7 @@ def _clean_playbook_output(output: str) -> str:
 
 class CodeGeneratorAgent:
     """
-    CodeGeneratorAgent following Meta's pattern - Direct LlamaStack API calls only
+    CodeGeneratorAgent - Direct LlamaStack API calls only
     """
     def __init__(self, client: LlamaStackClient, agent_id: str, session_id: str, timeout: int = 60):
         self.client = client
@@ -72,7 +72,7 @@ class CodeGeneratorAgent:
             # Create dedicated session for this generation
             generation_session_id = self.create_new_session(correlation_id)
 
-            # Direct API call following Meta's pattern
+            # Direct API call
             messages = [UserMessage(role="user", content=prompt)]
             
             generator = self.client.agents.turn.create(
@@ -159,7 +159,7 @@ class CodeGeneratorAgent:
             "client_base_url": self.client.base_url,
             "timeout": self.timeout,
             "status": "ready",
-            "pattern": "Meta Direct API"
+            "pattern": "LSS API"
         }
 
     async def health_check(self) -> bool:

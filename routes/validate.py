@@ -13,7 +13,7 @@ router = APIRouter(prefix="/validate", tags=["validation"])
 logger = logging.getLogger("validation_routes")
 
 def get_validation_agent(request: Request) -> ValidationAgent:
-    """Get ValidationAgent from app state (Meta pattern)"""
+    """Get ValidationAgent from app state """
     if not hasattr(request.app.state, 'validation_agent'):
         raise HTTPException(status_code=503, detail="ValidationAgent not available")
     return request.app.state.validation_agent
@@ -165,7 +165,7 @@ async def validation_health_check(
         return {
             "healthy": is_healthy,
             "agent_id": agent.agent_id,
-            "pattern": "Meta Direct API",
+            "pattern": "LSS API",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
