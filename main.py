@@ -35,7 +35,7 @@ from llama_stack_client import LlamaStackClient
 from llama_stack_client.types.agent_create_params import AgentConfig
 
 class AgentRegistry:
-    """Complete  Agent Registry - Prevents duplicates for ALL agents"""
+    """Complete Agent Registry - Prevents duplicates for ALL agents"""
     def __init__(self, client: LlamaStackClient):
         self.client = client
         self.agents = {}  # agent_name -> agent_id
@@ -81,7 +81,7 @@ class AgentRegistry:
         
         # Check local registry first
         if agent_name in self.agents:
-            logger.info(f"♻️  Reusing locally registered agent: {agent_name}")
+            logger.info(f"♻️ Reusing locally registered agent: {agent_name}")
             return self.agents[agent_name]
         
         # Check if agent exists in LlamaStack
@@ -166,7 +166,7 @@ class AgentRegistry:
         
         # Check if we already have a session
         if agent_name in self.sessions:
-            logger.info(f"♻️  Reusing existing session for agent: {agent_name}")
+            logger.info(f"♻️ Reusing existing session for agent: {agent_name}")
             return self.sessions[agent_name]
         
         try:
@@ -220,10 +220,13 @@ async def lifespan(app: FastAPI):
     app.state.client = client
     app.state.agent_registry = agent_registry
     
+    # CRITICAL FIX: Store config_loader in app.state for admin endpoints
+    app.state.config_loader = config_loader
+    
     logger.info(f"🔗 Connected to LlamaStack: {llamastack_base_url}")
 
-    # === Register ALL agents through AgentRegistry () ===
-    logger.info("🤖 Registering all agents ...")
+    # === Register ALL agents through AgentRegistry ===
+    logger.info("🤖 Registering all agents...")
     
     registered_agents = {}
     
@@ -255,23 +258,27 @@ async def lifespan(app: FastAPI):
     agent_manager = AgentManager(llamastack_base_url)
     app.state.agent_manager = agent_manager
 
-    # === Setup ChefAnalysisAgent ===
-    if "chef_analysis" in registered_agents:
+    # === Setup ChefAnalysisAgent with Prompt Chaining Support ===
+    if "chef_analysis_chaining" in registered_agents:
         from agents.chef_analysis.agent import ChefAnalysisAgent
         
-        chef_info = registered_agents["chef_analysis"]
-        app.state.chef_analysis_agent = ChefAnalysisAgent(
+        chef_info = registered_agents["chef_analysis_chaining"]
+        
+        # Initialize ChefAnalysisAgent with prompt chaining capability
+        chef_agent = ChefAnalysisAgent(
             client=client,
             agent_id=chef_info["agent_id"],
-            session_id=chef_info["session_id"]
+            session_id=chef_info["session_id"],
+            enable_prompt_chaining=True  # Enable prompt chaining
         )
-        logger.info(f"🍳 ChefAnalysisAgent ready: agent_id={chef_info['agent_id']}")
+        
+        app.state.chef_analysis_agent = chef_agent
+        logger.info(f"🍳 ChefAnalysisAgent ready with prompt chaining: agent_id={chef_info['agent_id']}")
     else:
-        logger.error(" chef_analysis agent not found in config!")
+        logger.error(" chef_analysis_chaining agent not found in config!")
 
     # === Setup ContextAgent ===
     if "context" in registered_agents:
-        
         context_info = registered_agents["context"]
         context_config = context_info["config"]
         
@@ -295,7 +302,6 @@ async def lifespan(app: FastAPI):
 
     # === Setup CodeGeneratorAgent ===
     if "generate" in registered_agents:
-        
         codegen_info = registered_agents["generate"]
         app.state.codegen_agent = CodeGeneratorAgent(
             client=client,
@@ -308,8 +314,6 @@ async def lifespan(app: FastAPI):
 
     # === Setup ValidationAgent ===
     if "validate" in registered_agents:
-        
-        
         validation_info = registered_agents["validate"]
         app.state.validation_agent = ValidationAgent(
             client=client,
@@ -348,7 +352,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Vector DB setup failed: {e}")
 
-    logger.info(" X2A Agents API startup complete!")
+    logger.info(" X2A Agents API startup complete with prompt chaining support!")
     
     yield
     
@@ -358,7 +362,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="X2A Agents API",
     version="1.0.0", 
-    description="Multi-agent IaC API - Complete  (No Duplicates for ALL agents)",
+    description="Multi-agent IaC API with Prompt Chaining Support",
     lifespan=lifespan
 )
 
@@ -385,14 +389,15 @@ async def root():
     
     return {
         "status": "ok",
-        "message": " Welcome to X2A multi-agent API - Complete !",
+        "message": " Welcome to X2A multi-agent API with Prompt Chaining!",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
         "agent_pattern": "LSS API",
         "duplicate_prevention": "Active for ALL agents",
+        "prompt_chaining": "Enabled for ChefAnalysisAgent",
         "services": [
             "admin - Agent management",
-            "chef - Chef cookbook analysis",
+            "chef - Chef cookbook analysis (with prompt chaining)",
             "context - Knowledge search", 
             "files - File upload/management",
             "generate - Code generation",
@@ -425,6 +430,7 @@ async def get_agents_status():
     if hasattr(app.state, 'chef_analysis_agent'):
         specialized_agents["chef_analysis"] = {
             "type": "ChefAnalysisAgent",
+            "prompt_chaining": "enabled",
             "status": app.state.chef_analysis_agent.get_status()
         }
     
@@ -439,12 +445,13 @@ async def get_agents_status():
         "agents": agent_details,
         "specialized_agents": specialized_agents,
         "llamastack_url": llamastack_base_url,
-        "pattern": "Complete ",
+        "pattern": "Complete with Prompt Chaining",
         "duplicate_prevention": "Active for ALL agents",
         "summary": {
             "total_agents": len(registry_status["agents"]),
             "active_sessions": len(registry_status["sessions"]),
-            "specialized_wrappers": len(specialized_agents)
+            "specialized_wrappers": len(specialized_agents),
+            "prompt_chaining_enabled": True
         }
     }
 
@@ -474,3 +481,46 @@ async def cleanup_duplicate_agents():
             
     except Exception as e:
         return {"error": f"Cleanup failed: {str(e)}"}
+
+@app.get("/api/chef/features")
+async def get_chef_features():
+    """Get information about Chef analysis features"""
+    return {
+        "agent_name": "ChefAnalysisAgent",
+        "features": {
+            "prompt_chaining": {
+                "enabled": True,
+                "description": "Multi-step analysis with context awareness",
+                "steps": [
+                    "Structure Analysis - Identifies cookbook type and complexity",
+                    "Version Analysis - Determines Chef/Ruby requirements", 
+                    "Dependency Analysis - Maps wrapper patterns and dependencies",
+                    "Functionality Analysis - Assesses purpose and reusability",
+                    "Recommendations - Provides strategic migration guidance"
+                ],
+                "benefits": [
+                    "Better JSON reliability",
+                    "Enhanced reasoning quality",
+                    "Context-aware analysis",
+                    "Improved debugging capabilities",
+                    "Progressive failure handling"
+                ]
+            },
+            "analysis_methods": {
+                "default": "prompt_chaining",
+                "available": ["standard", "prompt_chaining"],
+                "recommendation": "Use prompt_chaining for better results"
+            },
+            "session_management": "Dedicated sessions per analysis",
+            "streaming_support": "Real-time progress updates",
+            "error_handling": "Graceful fallbacks with partial results"
+        },
+        "usage": {
+            "endpoint": "/api/chef/analyze",
+            "method": "POST",
+            "payload": {
+                "files": {"metadata.rb": "...", "recipes/default.rb": "..."},
+                "method": "chaining"  # Optional: defaults to chaining
+            }
+        }
+    }

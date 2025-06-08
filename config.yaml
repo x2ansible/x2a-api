@@ -14,75 +14,32 @@ vector_db:
   default_chunk_size: 512
 
 agent_instructions:
-  chef_analysis: |
-    You are a Chef cookbook analyzer. Analyze the provided Chef cookbook and return JSON analysis.
-
-    Think step by step:
-    1. First, identify what Chef patterns and version indicators you see
-    2. Then, determine version requirements based on specific features
-    3. Next, analyze dependency patterns and wrapper relationships  
-    4. Finally, assess functionality and make recommendations
-
-    Task: Analyze Chef cookbook code and return structured analysis covering:
-    1. Chef and Ruby version requirements with migration effort estimation
-    2. Dependency mapping including wrapper cookbook detection
-    3. Functionality comparison for estate-wide consolidation decisions
-
-    Output Format:
-    Return only valid JSON with this exact structure:
-    {
-      "version_requirements": {
-        "min_chef_version": "version or null",
-        "min_ruby_version": "version or null", 
-        "migration_effort": "LOW|MEDIUM|HIGH",
-        "estimated_hours": number_or_null,
-        "deprecated_features": ["list of deprecated features found"]
-      },
-      "dependencies": {
-        "is_wrapper": true/false,
-        "wrapped_cookbooks": ["list of cookbooks this wraps via include_recipe"],
-        "direct_deps": ["list from metadata.rb dependencies"],
-        "runtime_deps": ["list from include_recipe calls"],
-        "circular_risk": "none|low|medium|high"
-      },
-      "functionality": {
-        "primary_purpose": "brief description of what cookbook does",
-        "services": ["list of services managed"],
-        "packages": ["list of packages installed"],
-        "files_managed": ["list of key files/directories managed"],
-        "reusability": "LOW|MEDIUM|HIGH",
-        "customization_points": ["list of key customization areas"]
-      },
-      "recommendations": {
-        "consolidation_action": "REUSE|EXTEND|RECREATE",
-        "rationale": "explanation of recommendation with specific reasoning",
-        "migration_priority": "LOW|MEDIUM|HIGH|CRITICAL",
-        "risk_factors": ["list of migration risks to consider"]
-      }
-    }
-
-    Analysis Guidelines:
-    - For version requirements: Look for Chef APIs (unified_mode = Chef 15+, node.override patterns, etc.)
-    - For Ruby versions: Check syntax patterns (safe navigation &., keyword args, etc.)
-    - For wrappers: Analyze include_recipe calls vs custom recipe ratio and attribute overrides
-    - For effort estimation: Consider deprecated features, version gaps, dependency complexity
-    - For reusability: Assess how configurable and modular the cookbook is
-    - For consolidation: Consider similarity with existing patterns and maintenance overhead
-
-    Rules:
-    - Return only valid JSON, no other text or explanations
-    - Use null for unknown/uncertain values rather than guessing
-    - Be specific about version requirements based on actual code patterns
-    - Identify wrapper patterns through include_recipe analysis and attribute override patterns
-    - Consider real-world migration complexity in effort estimates
+  chef_analysis_chaining: |
+    You are an expert Chef cookbook analyst specializing in step-by-step analysis.
+    Your role is to perform focused, single-step analysis as part of a larger prompt chaining sequence.
+    Each prompt will ask you to focus on ONE specific aspect of cookbook analysis.
+    
+    CRITICAL INSTRUCTIONS:
+    - Focus ONLY on the analysis step requested in the prompt
+    - Return ONLY valid JSON matching the requested structure
+    - Do NOT include explanatory text outside the JSON
+    - Be precise and specific in your analysis
+    - Use your expertise to identify patterns and requirements accurately
+    
+    You have deep knowledge of:
+    - Chef cookbook patterns and structures
+    - Version compatibility requirements
+    - Dependency management and wrapper patterns
+    - Infrastructure automation best practices
+    - Migration complexity assessment
 
   context: |
-      You are a code analysis assistant whose sole job is to retrieve the most relevant, actionable context from the vector database
-      using the RAG knowledge_search tool for the given code or user question.
-      ALWAYS invoke the knowledge_search tool to look up matching patterns, best practices, or documentation for this input.
-      Do NOT answer or convert the code—just return retrieved context.
-      Deduplicate, remove boilerplate, and ensure only high-relevance content is returned.
-      If no relevant documents are found, reply: 'No relevant patterns found for this input.'
+    You are a code analysis assistant whose sole job is to retrieve the most relevant, actionable context from the vector database
+    using the RAG knowledge_search tool for the given code or user question.
+    ALWAYS invoke the knowledge_search tool to look up matching patterns, best practices, or documentation for this input.
+    Do NOT answer or convert the code—just return retrieved context.
+    Deduplicate, remove boilerplate, and ensure only high-relevance content is returned.
+    If no relevant documents are found, reply: 'No relevant patterns found for this input.'
   
   generate: |
     You are an expert in Ansible. Given [CONTEXT] and [INPUT CODE], generate a single, production-ready Ansible playbook.
@@ -99,17 +56,16 @@ agent_instructions:
     5. Be clear, actionable, and educational in your advice.
 
 agents:
-  - name: "chef_analysis"
+  - name: "chef_analysis_chaining"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.chef_analysis}"   # Will be expanded by config.py
+    instructions: "{agent_instructions.chef_analysis_chaining}"
     sampling_params:
       strategy:
-        type: "top_p"
-        temperature: 0.7
-        top_p: 0.9
-      max_tokens: 4096
+        type: "greedy"  # More deterministic for JSON output
+        temperature: 0.1  # Low temperature for consistency
+      max_tokens: 2048  # Smaller since each step is focused
       repetition_penalty: 1.0
-    max_infer_iters: 3
+    max_infer_iters: 1  # Single step per chain link
 
   - name: "context"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -127,7 +83,7 @@ agents:
     
   - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.generate}"  # Fixed: was using context instead of generate
+    instructions: "{agent_instructions.generate}"
     sampling_params:
       strategy:
         type: "greedy"
@@ -141,11 +97,11 @@ agents:
     
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.validate}"    
+    instructions: "{agent_instructions.validate}"
     sampling_params:
       strategy:
         type: "greedy"
       max_tokens: 4096
     tools:
-      - name: "ansible_lint_tool"                  
+      - name: "ansible_lint_tool"
     max_infer_iters: 1

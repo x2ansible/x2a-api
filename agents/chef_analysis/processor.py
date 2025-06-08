@@ -641,3 +641,472 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
     if correlation_id is None:
         correlation_id = f"corr_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     return ChefAnalysisPostprocessor().extract_and_validate_analysis(raw_response, correlation_id, cookbook_content)
+
+
+# Add these methods to the ChefAnalysisPostprocessor class in processor.py
+# Place these methods after the existing extract_and_validate_analysis method
+
+    def extract_and_validate_analysis(self, raw_response: str, correlation_id: str, cookbook_content: str = "") -> Dict[str, Any]:
+        """
+        Enhanced extraction that preserves rich backend data for beautiful UI display
+        """
+        logger.info(f"[{correlation_id}] ═══ Starting enhanced postprocessing for UI display ═══")
+        logger.info(f"[{correlation_id}] Raw response length: {len(raw_response)} characters")
+        
+        # Get minimal fallback defaults
+        fallback_defaults = self._get_minimal_fallback_defaults(cookbook_content)
+        logger.info(f"[{correlation_id}] Fallback defaults prepared with {len(fallback_defaults)} fields")
+
+        # Extract JSON from response
+        if isinstance(raw_response, dict):
+            parsed = raw_response
+            logger.info(f"[{correlation_id}]  Input was already a dict")
+        else:
+            parsed = self._extract_json_from_text(raw_response, correlation_id)
+        
+        # Check if we got valid JSON from LLM
+        if not parsed:
+            logger.warning(f"[{correlation_id}] ⚠️ No JSON extracted from LLM, using complete fallback")
+            result = self._make_complete_response({}, correlation_id, "unknown", fallback_defaults)
+            return self._enhance_for_ui_display(result, correlation_id)
+
+        logger.info(f"[{correlation_id}]  LLM provided JSON with keys: {list(parsed.keys())}")
+
+        # Extract cookbook name
+        cookbook_name = parsed.get("cookbook_name", fallback_defaults.get("cookbook_name", "unknown"))
+        
+        # Ensure all required sections exist
+        self._ensure_required_sections(parsed)
+
+        # Fill missing fields while preserving LLM analysis
+        parsed = self._fill_missing_fields_only(parsed, fallback_defaults, correlation_id)
+
+        # Add metadata
+        parsed["metadata"] = {
+            "analyzed_at": datetime.utcnow().isoformat(),
+            "agent_version": "prompt_chaining_v1",
+            "correlation_id": correlation_id
+        }
+        parsed["success"] = True
+        parsed["cookbook_name"] = cookbook_name
+
+        # ENHANCEMENT: Add UI-friendly enhancements
+        ui_enhancements = self._create_ui_enhancements(parsed, correlation_id)
+        parsed.update(ui_enhancements)
+
+        # Validate using Pydantic
+        try:
+            response = CookbookAnalysisResponse(**parsed)
+            result = response.dict()
+            
+            # Preserve UI enhancements after validation
+            result.update(ui_enhancements)
+            
+            logger.info(f"[{correlation_id}]  Enhanced analysis validated successfully")
+            return self._enhance_for_ui_display(result, correlation_id)
+            
+        except Exception as e:
+            logger.error(f"[{correlation_id}] ❌ Pydantic validation failed: {e}")
+            result = self._make_complete_response(parsed, correlation_id, cookbook_name, fallback_defaults, error=str(e))
+            return self._enhance_for_ui_display(result, correlation_id)
+
+    def _ensure_required_sections(self, parsed: Dict[str, Any]) -> None:
+        """Ensure all required sections exist"""
+        required_sections = ["version_requirements", "dependencies", "functionality", "recommendations"]
+        for section in required_sections:
+            if section not in parsed:
+                parsed[section] = {}
+
+    def _create_ui_enhancements(self, parsed: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
+        """Create comprehensive UI-friendly enhancements"""
+        logger.info(f"[{correlation_id}] 🎨 Creating UI enhancements...")
+        
+        vr = parsed.get("version_requirements", {})
+        func = parsed.get("functionality", {})
+        recs = parsed.get("recommendations", {})
+        deps = parsed.get("dependencies", {})
+        
+        enhancements = {
+            # Core flattened fields for backward compatibility
+            "migration_effort": vr.get("migration_effort", "Not assessed"),
+            "complexity_level": self._enhance_complexity_display(parsed, func),
+            "primary_purpose": self._enhance_primary_purpose(func, parsed),
+            "reusability": func.get("reusability", "Not specified"),
+            "consolidation_action": recs.get("consolidation_action", "Review needed"),
+            "migration_priority": recs.get("migration_priority", "Medium"),
+            "is_wrapper": deps.get("is_wrapper"),
+            "services": func.get("services", []),
+            "packages": func.get("packages", []),
+            "files_managed": func.get("files_managed", []),
+            
+            # Enhanced UI-specific fields
+            "ui_display_name": self._create_display_name(parsed),
+            "ui_migration_summary": self._create_migration_summary(vr, func, recs),
+            "ui_risk_assessment": self._assess_risk_level(vr, recs, deps),
+            "ui_complexity_details": self._create_complexity_details(parsed, func, deps),
+            "ui_conversion_readiness": self._assess_conversion_readiness(parsed, vr, func, deps),
+            "ui_feature_summary": self._create_feature_summary(func, deps),
+            "ui_timeline_estimate": self._create_timeline_estimate(vr),
+            
+            # Enhanced convertible logic
+            "convertible": self._determine_convertible_status(parsed, vr, func, deps),
+        }
+        
+        logger.info(f"[{correlation_id}]  Created {len(enhancements)} UI enhancements")
+        return enhancements
+
+    def _enhance_complexity_display(self, parsed: Dict, func: Dict) -> str:
+        """Create rich complexity information"""
+        base_complexity = parsed.get("complexity_level", "")
+        
+        # If we have a good complexity level, enhance it
+        if base_complexity and base_complexity != "Unknown":
+            return base_complexity
+        
+        # Otherwise, infer from data
+        services_count = len(func.get("services", []))
+        packages_count = len(func.get("packages", []))
+        files_count = len(func.get("files_managed", []))
+        customization_count = len(func.get("customization_points", []))
+        
+        total_items = services_count + packages_count + files_count + customization_count
+        
+        if total_items > 15:
+            return "High - Complex multi-service configuration"
+        elif total_items > 8:
+            return "Medium - Standard multi-component setup"
+        elif total_items > 3:
+            return "Low - Simple configuration"
+        elif total_items > 0:
+            return "Simple - Basic setup"
+        else:
+            return "Minimal - Basic cookbook structure"
+
+    def _enhance_primary_purpose(self, func: Dict, parsed: Dict) -> str:
+        """Create enhanced primary purpose description"""
+        base_purpose = func.get("primary_purpose", "")
+        
+        if base_purpose and base_purpose != "No summary available":
+            return base_purpose
+        
+        # Generate purpose from available data
+        services = func.get("services", [])
+        packages = func.get("packages", [])
+        
+        if services:
+            return f"Manages {', '.join(services[:3])} service{'s' if len(services) > 1 else ''}" + \
+                   (f" and {len(services) - 3} more" if len(services) > 3 else "")
+        elif packages:
+            return f"Installs and configures {', '.join(packages[:3])}" + \
+                   (f" and {len(packages) - 3} more packages" if len(packages) > 3 else "")
+        else:
+            return "Chef cookbook for system configuration and management"
+
+    def _create_display_name(self, parsed: Dict) -> str:
+        """Create user-friendly display name"""
+        name = parsed.get("cookbook_name", "")
+        
+        if not name or "uploaded_cookbook" in name.lower():
+            # Try to infer from functionality
+            func = parsed.get("functionality", {})
+            services = func.get("services", [])
+            if services:
+                return f"Chef Cookbook ({services[0].title()} Configuration)"
+            else:
+                return "Chef Cookbook"
+        
+        return name.replace("_", " ").title()
+
+    def _create_migration_summary(self, vr: Dict, func: Dict, recs: Dict) -> str:
+        """Create comprehensive migration summary"""
+        parts = []
+        
+        # Add purpose
+        purpose = func.get("primary_purpose")
+        if purpose:
+            parts.append(f"📋 {purpose}")
+        
+        # Add migration effort
+        effort = vr.get("migration_effort")
+        hours = vr.get("estimated_hours")
+        if effort:
+            effort_text = f"🔄 {effort.title()} migration effort"
+            if hours:
+                effort_text += f" (~{hours}h estimated)"
+            parts.append(effort_text)
+        
+        # Add recommendation
+        action = recs.get("consolidation_action")
+        if action:
+            action_emoji = {"REUSE": "♻️", "EXTEND": "🔧", "RECREATE": "🆕"}.get(action, "💡")
+            parts.append(f"{action_emoji} Recommended: {action.title()}")
+        
+        return " | ".join(parts) if parts else "Analysis completed successfully"
+
+    def _assess_risk_level(self, vr: Dict, recs: Dict, deps: Dict) -> Dict[str, Any]:
+        """Comprehensive risk assessment"""
+        risk_score = 0
+        risk_factors = []
+        
+        # Migration effort risk
+        effort = vr.get("migration_effort", "").upper()
+        if effort == "HIGH":
+            risk_score += 3
+            risk_factors.append("High migration effort required")
+        elif effort == "MEDIUM":
+            risk_score += 1
+            risk_factors.append("Moderate migration complexity")
+        
+        # Dependency risk
+        if deps.get("circular_risk", "none") != "none":
+            risk_score += 2
+            risk_factors.append("Circular dependency risk detected")
+        
+        # Wrapper cookbook risk
+        if deps.get("is_wrapper"):
+            risk_score += 1
+            risk_factors.append("Wrapper cookbook - dependency on other cookbooks")
+        
+        # Explicit risk factors
+        explicit_risks = recs.get("risk_factors", [])
+        risk_score += len(explicit_risks)
+        risk_factors.extend(explicit_risks)
+        
+        # Deprecated features
+        deprecated = vr.get("deprecated_features", [])
+        if deprecated:
+            risk_score += len(deprecated)
+            risk_factors.append(f"Uses {len(deprecated)} deprecated feature(s)")
+        
+        # Determine level
+        if risk_score >= 5:
+            level = "HIGH"
+            color = "red"
+        elif risk_score >= 3:
+            level = "MEDIUM"
+            color = "yellow"
+        elif risk_score >= 1:
+            level = "LOW"
+            color = "blue"
+        else:
+            level = "MINIMAL"
+            color = "green"
+        
+        return {
+            "level": level,
+            "score": risk_score,
+            "factors": risk_factors,
+            "color": color,
+            "assessment": f"{level.title()} risk migration" + (f" ({len(risk_factors)} factors)" if risk_factors else "")
+        }
+
+    def _create_complexity_details(self, parsed: Dict, func: Dict, deps: Dict) -> str:
+        """Create detailed complexity breakdown"""
+        details = []
+        
+        services = func.get("services", [])
+        packages = func.get("packages", [])
+        files = func.get("files_managed", [])
+        customizations = func.get("customization_points", [])
+        dependencies = deps.get("direct_deps", [])
+        
+        if services:
+            details.append(f"🔧 {len(services)} service(s)")
+        if packages:
+            details.append(f"📦 {len(packages)} package(s)")
+        if files:
+            details.append(f"📁 {len(files)} managed file(s)")
+        if customizations:
+            details.append(f"⚙️ {len(customizations)} customization point(s)")
+        if dependencies:
+            details.append(f"🔗 {len(dependencies)} dependencies")
+        
+        return " | ".join(details) if details else "Standard Chef cookbook structure"
+
+    def _assess_conversion_readiness(self, parsed: Dict, vr: Dict, func: Dict, deps: Dict) -> Dict[str, Any]:
+        """Comprehensive conversion readiness assessment"""
+        readiness_score = 0
+        max_score = 8
+        criteria = []
+        
+        # Version requirements clarity
+        if vr.get("min_chef_version"):
+            readiness_score += 1
+            criteria.append(" Chef version requirements identified")
+        else:
+            criteria.append("⚠️ Chef version requirements unclear")
+        
+        # Migration effort assessment
+        effort = vr.get("migration_effort", "").upper()
+        if effort == "LOW":
+            readiness_score += 2
+            criteria.append(" Low migration effort")
+        elif effort == "MEDIUM":
+            readiness_score += 1
+            criteria.append(" Moderate migration effort")
+        else:
+            criteria.append("⚠️ High or unknown migration effort")
+        
+        # Functionality clarity
+        if func.get("primary_purpose"):
+            readiness_score += 1
+            criteria.append(" Clear primary purpose defined")
+        
+        # Resource identification
+        if func.get("packages") or func.get("services"):
+            readiness_score += 1
+            criteria.append(" Resources clearly identified")
+        
+        # Dependency analysis
+        is_wrapper = deps.get("is_wrapper")
+        if is_wrapper is True:
+            readiness_score += 1
+            criteria.append(" Wrapper cookbook (easier conversion)")
+        elif is_wrapper is False:
+            readiness_score += 1
+            criteria.append(" Standalone cookbook")
+        
+        # Risk factors
+        risk_factors = parsed.get("ui_risk_assessment", {}).get("factors", [])
+        if len(risk_factors) <= 2:
+            readiness_score += 1
+            criteria.append(" Minimal risk factors")
+        
+        # Reusability
+        reusability = func.get("reusability", "").upper()
+        if reusability in ["HIGH", "MEDIUM"]:
+            readiness_score += 1
+            criteria.append(" Good reusability potential")
+        
+        readiness_percentage = (readiness_score / max_score) * 100
+        
+        if readiness_percentage >= 85:
+            level = "EXCELLENT"
+            color = "green"
+            recommendation = "Ready for immediate conversion"
+        elif readiness_percentage >= 65:
+            level = "GOOD"
+            color = "blue"
+            recommendation = "Ready for conversion with minor preparation"
+        elif readiness_percentage >= 45:
+            level = "FAIR"
+            color = "yellow"
+            recommendation = "Requires preparation before conversion"
+        else:
+            level = "NEEDS_REVIEW"
+            color = "red"
+            recommendation = "Requires significant analysis before conversion"
+        
+        return {
+            "score": readiness_score,
+            "max_score": max_score,
+            "percentage": readiness_percentage,
+            "level": level,
+            "color": color,
+            "criteria": criteria,
+            "recommendation": recommendation
+        }
+
+    def _create_feature_summary(self, func: Dict, deps: Dict) -> Dict[str, Any]:
+        """Create feature summary for UI display"""
+        return {
+            "services_count": len(func.get("services", [])),
+            "packages_count": len(func.get("packages", [])),
+            "files_count": len(func.get("files_managed", [])),
+            "customization_count": len(func.get("customization_points", [])),
+            "dependency_count": len(deps.get("direct_deps", [])),
+            "is_wrapper": deps.get("is_wrapper", False),
+            "has_templates": any("template" in f.lower() for f in func.get("files_managed", [])),
+            "has_services": len(func.get("services", [])) > 0,
+        }
+
+    def _create_timeline_estimate(self, vr: Dict) -> Dict[str, Any]:
+        """Create timeline estimates"""
+        hours = vr.get("estimated_hours", 2)
+        effort = vr.get("migration_effort", "MEDIUM").upper()
+        
+        # Adjust estimates based on effort level
+        if effort == "LOW":
+            analysis_hours = max(0.5, hours * 0.2)
+            conversion_hours = max(1, hours * 0.6)
+            testing_hours = max(0.5, hours * 0.2)
+        elif effort == "HIGH":
+            analysis_hours = max(2, hours * 0.3)
+            conversion_hours = max(4, hours * 0.5)
+            testing_hours = max(1, hours * 0.2)
+        else:  # MEDIUM
+            analysis_hours = max(1, hours * 0.25)
+            conversion_hours = max(2, hours * 0.6)
+            testing_hours = max(0.5, hours * 0.15)
+        
+        return {
+            "total_hours": hours,
+            "analysis_hours": analysis_hours,
+            "conversion_hours": conversion_hours,
+            "testing_hours": testing_hours,
+            "effort_level": effort,
+            "timeline_breakdown": {
+                "analysis": f"{analysis_hours:.1f}h - Code analysis and planning",
+                "conversion": f"{conversion_hours:.1f}h - Ansible playbook creation",
+                "testing": f"{testing_hours:.1f}h - Validation and testing"
+            }
+        }
+
+    def _determine_convertible_status(self, parsed: Dict, vr: Dict, func: Dict, deps: Dict) -> bool:
+        """Smart determination of convertible status"""
+        # If explicitly set, use that
+        if parsed.get("convertible") is not None:
+            return parsed["convertible"]
+        
+        # Score-based determination
+        convertible_score = 0
+        
+        # Positive factors
+        if vr.get("migration_effort") == "LOW":
+            convertible_score += 3
+        elif vr.get("migration_effort") == "MEDIUM":
+            convertible_score += 1
+        
+        if func.get("services") or func.get("packages"):
+            convertible_score += 2
+        
+        if func.get("reusability", "").upper() in ["HIGH", "MEDIUM"]:
+            convertible_score += 1
+        
+        if not deps.get("circular_risk") or deps.get("circular_risk") == "none":
+            convertible_score += 1
+        
+        # Negative factors
+        if vr.get("deprecated_features"):
+            convertible_score -= len(vr["deprecated_features"])
+        
+        if deps.get("circular_risk", "none") in ["high", "medium"]:
+            convertible_score -= 2
+        
+        # Decision threshold
+        return convertible_score >= 2
+
+    def _enhance_for_ui_display(self, result: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
+        """Final enhancement pass for optimal UI display"""
+        logger.info(f"[{correlation_id}] 🎨 Final UI display enhancement")
+        
+        # Ensure all display fields have good defaults
+        if not result.get("summary") or result["summary"] == "No summary available":
+            result["summary"] = result.get("ui_migration_summary", "Chef cookbook analysis completed")
+        
+        # Enhance conversion notes if basic
+        if not result.get("conversion_notes") or "No conversion notes" in result["conversion_notes"]:
+            convertible = result.get("convertible", True)
+            effort = result.get("migration_effort", "Medium")
+            result["conversion_notes"] = (
+                f"This cookbook {'can be converted' if convertible else 'requires review before conversion'} "
+                f"to Ansible with {effort.lower()} effort. "
+                f"{result.get('ui_conversion_readiness', {}).get('recommendation', '')}"
+            )
+        
+        # Add UI metadata
+        result["ui_enhanced"] = True
+        result["ui_enhancement_timestamp"] = datetime.utcnow().isoformat()
+        
+        logger.info(f"[{correlation_id}]  UI enhancement completed")
+        return result
