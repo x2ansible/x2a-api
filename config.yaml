@@ -48,12 +48,7 @@ agent_instructions:
     Your response must start with '---' and contain no extra blank lines at the start or end.
 
   validate: |
-    You are an expert Ansible playbook validation agent. Your role is to:
-    1. ALWAYS call the ansible_lint_tool for every playbook validation.
-    2. NEVER answer directly, never guess—ALWAYS use the tool.
-    3. After tool results, explain errors, best practices, and recommendations.
-    4. Only summarize and explain the output; never invent validation results.
-    5. Be clear, actionable, and educational in your advice.
+    You are an Ansible expert. Use Ansible Lint tools when asked about linting.
 
 agents:
   - name: "chef_analysis_chaining"
@@ -101,7 +96,9 @@ agents:
     sampling_params:
       strategy:
         type: "greedy"
-      max_tokens: 4096
+      max_tokens: 512
     tools:
-      - name: "ansible_lint_tool"
-    max_infer_iters: 1
+      - "mcp::ansible_lint"
+    tool_config:
+      tool_choice: "auto"
+    max_infer_iters: 3

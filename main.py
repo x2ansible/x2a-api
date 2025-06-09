@@ -96,7 +96,7 @@ class AgentRegistry:
         # Create new agent with explicit name
         logger.info(f"🆕 Creating new agent: {agent_name}")
         
-        # Build AgentConfig with explicit name
+        # Build AgentConfig with explicit name and tool_config
         agent_config = AgentConfig(
             name=agent_name,  # CRITICAL: Explicit name
             model=agent_config_dict["model"],
@@ -105,6 +105,7 @@ class AgentRegistry:
             max_infer_iters=agent_config_dict.get("max_infer_iters"),
             toolgroups=agent_config_dict.get("toolgroups", []),
             tools=agent_config_dict.get("tools", []),
+            tool_config=agent_config_dict.get("tool_config"),  # PASS THROUGH tool_config
             enable_session_persistence=True,
         )
         
@@ -312,7 +313,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ generate agent not found in config!")
 
-    # === Setup ValidationAgent ===
+    # === Setup ValidationAgent (Registry Pattern - NO MORE DUPLICATES!) ===
     if "validate" in registered_agents:
         validation_info = registered_agents["validate"]
         app.state.validation_agent = ValidationAgent(
@@ -320,7 +321,7 @@ async def lifespan(app: FastAPI):
             agent_id=validation_info["agent_id"],
             session_id=validation_info["session_id"]
         )
-        logger.info(f"🔍 ValidationAgent ready: agent_id={validation_info['agent_id']}")
+        logger.info(f"🔍 ValidationAgent ready (registry pattern): agent_id={validation_info['agent_id']}")
     else:
         logger.warning("⚠️ validate agent not found in config!")
 
@@ -352,7 +353,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Vector DB setup failed: {e}")
 
-    logger.info(" X2A Agents API startup complete with prompt chaining support!")
+    logger.info(" X2A Agents API startup complete - ")
     
     yield
     
@@ -362,7 +363,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="X2A Agents API",
     version="1.0.0", 
-    description="Multi-agent IaC API with Prompt Chaining Support",
+    description="Multi-agent IaC API with Registry Pattern (No Duplicates)",
     lifespan=lifespan
 )
 
@@ -389,19 +390,20 @@ async def root():
     
     return {
         "status": "ok",
-        "message": " Welcome to X2A multi-agent API with Prompt Chaining!",
+        "message": " Welcome to X2A multi-agent API with NO DUPLICATE AGENTS!",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "LSS API",
-        "duplicate_prevention": "Active for ALL agents",
+        "agent_pattern": "Registry-based (All agents)",
+        "duplicate_prevention": "Active for ALL agents including ValidationAgent",
         "prompt_chaining": "Enabled for ChefAnalysisAgent",
+        "mcp_tools": "Properly configured via registry",
         "services": [
             "admin - Agent management",
             "chef - Chef cookbook analysis (with prompt chaining)",
             "context - Knowledge search", 
             "files - File upload/management",
             "generate - Code generation",
-            "validate - Playbook validation",
+            "validate - Playbook validation (MCP mcp::ansible_lint)",
             "vector-db - Vector database management"
         ]
     }
@@ -422,7 +424,7 @@ async def get_agents_status():
             "agent_id": info["agent_id"],
             "session_id": info["session_id"],
             "status": "ready",
-            "pattern": "LSS API"
+            "pattern": "Registry-based"
         }
     
     # Add specialized agent info
@@ -437,7 +439,22 @@ async def get_agents_status():
     if hasattr(app.state, 'context_agent'):
         specialized_agents["context"] = {
             "type": "ContextAgent", 
+            "tool": "builtin::rag",
             "status": app.state.context_agent.get_status()
+        }
+    
+    if hasattr(app.state, 'codegen_agent'):
+        specialized_agents["code_generation"] = {
+            "type": "CodeGeneratorAgent", 
+            "status": app.state.codegen_agent.get_status()
+        }
+    
+    if hasattr(app.state, 'validation_agent'):
+        specialized_agents["validation"] = {
+            "type": "ValidationAgent",
+            "tool": "mcp::ansible_lint", 
+            "pattern": "Registry-based (NO MORE DUPLICATES!)",
+            "status": app.state.validation_agent.get_status()
         }
     
     return {
@@ -445,13 +462,14 @@ async def get_agents_status():
         "agents": agent_details,
         "specialized_agents": specialized_agents,
         "llamastack_url": llamastack_base_url,
-        "pattern": "Complete with Prompt Chaining",
-        "duplicate_prevention": "Active for ALL agents",
+        "pattern": "Complete Registry Pattern - No Duplicates",
+        "duplicate_prevention": "Active for ALL agents including ValidationAgent",
         "summary": {
             "total_agents": len(registry_status["agents"]),
             "active_sessions": len(registry_status["sessions"]),
             "specialized_wrappers": len(specialized_agents),
-            "prompt_chaining_enabled": True
+            "prompt_chaining_enabled": True,
+            "mcp_validation_fixed": True
         }
     }
 
@@ -521,6 +539,53 @@ async def get_chef_features():
             "payload": {
                 "files": {"metadata.rb": "...", "recipes/default.rb": "..."},
                 "method": "chaining"  # Optional: defaults to chaining
+            }
+        }
+    }
+
+@app.get("/api/validate/features")
+async def get_validate_features():
+    """Get information about Validation agent features"""
+    return {
+        "agent_name": "ValidationAgent",
+        "features": {
+            "mcp_tool_integration": {
+                "enabled": True,
+                "tool": "mcp::ansible_lint",
+                "pattern": "Registry-based (NO MORE DUPLICATES!)",
+                "description": "Direct integration with Ansible Lint via MCP tools using existing agent"
+            },
+            "validation_profiles": {
+                "available": ["basic", "moderate", "safety", "shared", "production"],
+                "default": "basic",
+                "descriptions": {
+                    "basic": "Basic syntax and structure validation",
+                    "moderate": "Standard best practices checking", 
+                    "safety": "Security-focused validation rules",
+                    "shared": "Rules for shared/reusable playbooks",
+                    "production": "Strict production-ready validation"
+                }
+            },
+            "session_management": "Dedicated sessions per validation",
+            "streaming_support": "Real-time validation progress",
+            "multiple_file_support": "Batch validation capabilities",
+            "duplicate_prevention": "Uses registry pattern - no more agent duplication!"
+        },
+        "endpoints": {
+            "validate_playbook": "/api/validate/playbook",
+            "syntax_check": "/api/validate/syntax", 
+            "production_validate": "/api/validate/production",
+            "multiple_files": "/api/validate/multiple",
+            "streaming": "/api/validate/playbook/stream"
+        },
+        "usage": {
+            "basic_validation": {
+                "endpoint": "/api/validate/playbook",
+                "method": "POST",
+                "payload": {
+                    "playbook_content": "---\n- name: Example\n  hosts: all\n  tasks: []",
+                    "profile": "basic"
+                }
             }
         }
     }

@@ -1,260 +1,260 @@
 import logging
-import asyncio
-import time
-import json
 import uuid
-from typing import Dict, Any, AsyncGenerator
+import json
+from typing import Optional, Dict, Any, List
+from json import JSONDecodeError
 
-from llama_stack_client import LlamaStackClient
+from llama_stack_client import LlamaStackClient, Agent
 from llama_stack_client.types import UserMessage
+
+try:
+    from rich.pretty import pprint
+    from termcolor import cprint
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 logger = logging.getLogger("ValidationAgent")
 
-class ValidationAgent:
-    """
-    ValidationAgent - Direct LlamaStack API calls only
-    """
-    def __init__(self, client: LlamaStackClient, agent_id: str, session_id: str, timeout: int = 30):
-        self.client = client
-        self.agent_id = agent_id
-        self.session_id = session_id  # Default session
-        self.timeout = timeout
-        self.logger = logger
-        self.logger.info(f"🔍 ValidationAgent initialized with agent_id: {agent_id}")
-
-    def create_new_session(self, correlation_id: str) -> str:
-        """Create a new session for this specific validation request"""
-        try:
-            response = self.client.agents.session.create(
-                agent_id=self.agent_id,
-                session_name=f"validation-{correlation_id}-{uuid.uuid4()}",
-            )
-            session_id = response.session_id
-            self.logger.info(f" Created new session: {session_id} for correlation: {correlation_id}")
-            return session_id
-        except Exception as e:
-            self.logger.error(f" Failed to create session: {e}")
-            # Fallback to default session
-            self.logger.info(f"↩️  Falling back to default session: {self.session_id}")
-            return self.session_id
-
-    async def validate_playbook(self, playbook: str, lint_profile: str = "basic", correlation_id: str = None) -> Dict[str, Any]:
-        """Validate Ansible playbook using the validation agent"""
-        correlation_id = correlation_id or str(uuid.uuid4())
-        
-        prompt = f"""Validate this Ansible playbook using the ansible_lint_tool with the '{lint_profile}' profile:
-
-```yaml
-{playbook}
-```
-
-Always call the tool first, then provide a comprehensive analysis of the results."""
-
-        self.logger.info(f"🔍 Starting validation with {lint_profile} profile...")
-        
-        try:
-            # Create dedicated session for this validation
-            validation_session_id = self.create_new_session(correlation_id)
-
-            # Direct LSS API call 
-            messages = [UserMessage(role="user", content=prompt)]
+def _format_lint_issues(issues: List[Dict[str, Any]]) -> str:
+    """Format lint issues into a readable string"""
+    if not issues:
+        return "No issues found."
+    
+    formatted = []
+    for issue in issues:
+        if isinstance(issue, dict):
+            rule = issue.get("rule", "unknown")
+            message = issue.get("message", str(issue))
+            severity = issue.get("severity", "info")
+            filename = issue.get("filename", "")
+            line = issue.get("line", "")
             
-            # Add timeout using asyncio
-            generator = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.agents.turn.create,
-                    agent_id=self.agent_id,
-                    session_id=validation_session_id,
-                    messages=messages,
-                    stream=True,
-                ),
-                timeout=self.timeout
-            )
-            
-            # Process streaming response
-            turn = None
-            for chunk in generator:
-                event = chunk.event
-                event_type = event.payload.event_type
-                if event_type == "turn_complete":
-                    turn = event.payload.turn
-                    break
-            
-            if not turn:
-                self.logger.error(" No turn completed in response")
-                return self._create_error_response("No turn completed in validation")
+            location = f"{filename}:{line}" if filename and line else filename or "unknown"
+            formatted.append(f"[{severity.upper()}] {rule}: {message} ({location})")
+        else:
+            formatted.append(str(issue))
+    
+    return "\n".join(formatted)
 
-            # Log steps for debugging
-            self.logger.info(f" Turn completed with {len(turn.steps)} steps")
-            for i, step in enumerate(turn.steps):
-                self.logger.info(f"📋 Step {i+1}: {step.step_type}")
-
-            # Process the agent response
-            return await self._process_agent_response(turn, playbook, lint_profile)
-            
-        except asyncio.TimeoutError:
-            self.logger.error(f" Agent validation timed out after {self.timeout} seconds")
-            return self._create_error_response(f"Agent validation timed out after {self.timeout} seconds")
-        except Exception as e:
-            self.logger.error(f" Validation failed: {str(e)}")
-            return self._create_error_response(f"Agent validation failed: {str(e)}")
-
-    async def _process_agent_response(self, turn, playbook: str, lint_profile: str) -> Dict[str, Any]:
-        """Process the agent response and extract validation results"""
-        try:
-            agent_text = ""
-            tool_results = []
-
-            self.logger.info("Processing agent response...")
-            
-            # Get agent output text
-            if hasattr(turn, 'output_message') and hasattr(turn.output_message, 'content'):
-                agent_text = str(turn.output_message.content)
-                self.logger.info(f"Got agent output: {len(agent_text)} chars")
-            
-            # Process steps to find tool results
-            if hasattr(turn, 'steps') and turn.steps:
-                self.logger.info(f"Found {len(turn.steps)} steps")
-                for i, step in enumerate(turn.steps):
-                    self.logger.info(f"Processing step {i}: {step.step_type}")
-                    
-                    # Check if this is a tool execution step
-                    if step.step_type == "tool_execution":
-                        self.logger.info("Found tool execution step!")
-                        
-                        # Check tool_responses
-                        if hasattr(step, 'tool_responses') and step.tool_responses:
-                            self.logger.info(f"Found {len(step.tool_responses)} tool responses")
-                            for j, tool_response in enumerate(step.tool_responses):
-                                self.logger.info(f"Tool response {j}: {type(tool_response)}")
-                                
-                                # Extract tool response content
-                                content = self._extract_tool_response_content(tool_response)
-                                if content and isinstance(content, dict) and 'validation_passed' in content:
-                                    self.logger.info("Successfully found validation result!")
-                                    tool_results.append(content)
-
-            self.logger.info(f"Processed response - Agent text: {len(agent_text)} chars, Tool results: {len(tool_results)}")
-
-            # Look for validation results in tool outputs
-            validation_result = None
-            for tool_result in tool_results:
-                if isinstance(tool_result, dict) and 'validation_passed' in tool_result:
-                    validation_result = tool_result
-                    self.logger.info(f"Found validation result: passed={validation_result.get('validation_passed')}")
-                    break
-
-            if validation_result:
-                self.logger.info(" Successfully found validation result from tool!")
-                return {
-                    "success": True,
-                    "validation_passed": validation_result.get("validation_passed", False),
-                    "exit_code": validation_result.get("exit_code", -1),
-                    "message": validation_result.get("message", ""),
-                    "summary": validation_result.get("summary", {}),
-                    "issues": validation_result.get("issues", []),
-                    "recommendations": validation_result.get("recommendations", []),
-                    "agent_analysis": agent_text.strip(),
-                    "raw_output": validation_result.get("raw_output", {}),
-                    "playbook_length": len(playbook),
-                    "lint_profile": lint_profile,
-                    "debug_info": {
-                        "tool_results_found": len(tool_results),
-                        "mode": "pure_agentic"
-                    }
-                }
-            else:
-                self.logger.error(" Agent did not call the tool or tool response not found!")
-                
-                # Import and call the tool directly as fallback
-                try:
-                    from agents.tools.ansible_lint_tool import ansible_lint_tool
-                    self.logger.warning("⚠️ Falling back to direct tool call")
-                    direct_result = ansible_lint_tool(playbook, lint_profile)
-                    return {
-                        "success": True,
-                        "validation_passed": direct_result.get("validation_passed", False),
-                        "exit_code": direct_result.get("exit_code", -1),
-                        "message": direct_result.get("message", ""),
-                        "summary": direct_result.get("summary", {}),
-                        "issues": direct_result.get("issues", []),
-                        "recommendations": direct_result.get("recommendations", []),
-                        "agent_analysis": agent_text.strip() or "Tool called directly due to tool response parsing issues",
-                        "raw_output": direct_result.get("raw_output", {}),
-                        "playbook_length": len(playbook),
-                        "lint_profile": lint_profile,
-                        "debug_info": {
-                            "mode": "direct_tool_fallback",
-                            "tool_results_found": len(tool_results),
-                            "reason": "Agent called tool but tool response not extracted properly"
-                        }
-                    }
-                except ImportError:
-                    return self._create_error_response("Tool not found and agent response not extractable")
-
-        except Exception as e:
-            self.logger.error(f" Failed to process agent response: {e}")
-            return self._create_error_response(f"Failed to process agent response: {str(e)}")
-
-    def _extract_tool_response_content(self, tool_response):
-        """Extract content from tool response in various possible formats"""
-        # Check if response has content
-        if hasattr(tool_response, 'content'):
-            content = tool_response.content
-            
-            # Try to parse as JSON if it's a string
-            if isinstance(content, str):
-                try:
-                    parsed_content = json.loads(content)
-                    if isinstance(parsed_content, dict):
-                        return parsed_content
-                except json.JSONDecodeError:
-                    pass
-            
-            # If it's already a dict
-            elif isinstance(content, dict):
-                return content
-        
-        # Check if response itself is the result
-        if hasattr(tool_response, 'result'):
-            result = tool_response.result
-            if isinstance(result, dict):
-                return result
-        
-        # Check other possible attributes
-        for attr_name in ['data', 'output', 'value']:
-            if hasattr(tool_response, attr_name):
-                attr_value = getattr(tool_response, attr_name)
-                if isinstance(attr_value, dict):
-                    return attr_value
-        
+def _get_lint_result_from_tool_response_content(content: str):
+    """Extract lint result from tool response content"""
+    try:
+        top = json.loads(content)
+        if isinstance(top, dict) and "text" in top:
+            return json.loads(top["text"])
+        return top
+    except Exception as e:
+        logger.warning(f"Failed to parse tool_response content as JSON: {e}")
         return None
 
-    async def validate_playbook_stream(
-        self, playbook: str, lint_profile: str = "basic", correlation_id: str = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream validation progress and result"""
+def _step_printer(steps, logger_instance=None):
+    """Print the steps of an agent's response in a formatted way"""
+    if not RICH_AVAILABLE:
+        if logger_instance:
+            logger_instance.info("Rich/termcolor not available - skipping step printing")
+        return
+    
+    for i, step in enumerate(steps):
+        step_type = type(step).__name__
+        print("\n"+"-" * 10, f"📍 Step {i+1}: {step_type}","-" * 10)
+        
+        if step_type == "ToolExecutionStep":
+            print("🔧 Executing tool...")
+            try:
+                if hasattr(step, 'tool_responses') and step.tool_responses:
+                    response_content = step.tool_responses[0].content
+                    try:
+                        pprint(json.loads(response_content))
+                    except (TypeError, JSONDecodeError):
+                        pprint(response_content)
+                else:
+                    print("No tool responses found")
+            except Exception as e:
+                print(f"Error displaying tool response: {e}")
+        else:
+            # Handle inference steps
+            if hasattr(step, 'api_model_response') and step.api_model_response:
+                if hasattr(step.api_model_response, 'content') and step.api_model_response.content:
+                    print("🤖 Model Response:")
+                    cprint(f"{step.api_model_response.content}\n", "magenta")
+                elif hasattr(step.api_model_response, 'tool_calls') and step.api_model_response.tool_calls:
+                    tool_call = step.api_model_response.tool_calls[0]
+                    print("🛠️ Tool call Generated:")
+                    try:
+                        args = json.loads(tool_call.arguments_json)
+                        cprint(f"Tool call: {tool_call.tool_name}, Arguments: {args}", "magenta")
+                    except:
+                        cprint(f"Tool call: {tool_call.tool_name}, Arguments: {tool_call.arguments_json}", "magenta")
+    
+    print("="*10, "Query processing completed","="*10,"\n")
+
+class ValidationAgent:
+    """
+    ValidationAgent - Hybrid approach: Uses working direct Agent creation pattern
+    """
+    
+    def __init__(self, client: LlamaStackClient, agent_id: str = None, session_id: str = None, 
+                 timeout: int = 60, verbose_logging: bool = False):
+        self.client = client
+        self.agent_id = agent_id  # For compatibility, but we'll create our own agents
+        self.session_id = session_id
+        self.timeout = timeout
+        self.verbose_logging = verbose_logging
+        self.logger = logger
+        self.logger.info(f"🔍 ValidationAgent initialized (hybrid pattern)")
+
+    async def validate_playbook(
+        self, 
+        playbook_content: str, 
+        profile: str = "basic", 
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Validate using direct Agent creation - SAME AS WORKING TEST SCRIPT"""
         correlation_id = correlation_id or str(uuid.uuid4())
-        start_time = time.time()
+        
+        self.logger.info(f"🔍 Validating playbook with {profile} profile (correlation: {correlation_id})")
+        
+        try:
+            # Create agent using EXACT same pattern as working test script
+            self.logger.info("🆕 Creating direct agent (like working test script)")
+            
+            agent = Agent(
+                self.client,
+                model="meta-llama/Llama-3.1-8B-Instruct",
+                instructions="You are an Ansible expert. Use Ansible Lint tools when asked about linting.",
+                tools=["mcp::ansible_lint"],
+                tool_config={"tool_choice": "auto"},
+                sampling_params={"strategy": {"type": "greedy"}, "max_tokens": 512}
+            )
+            
+            # Create session
+            session_id = agent.create_session(f"validation_{correlation_id}")
+            self.logger.info(f"📱 Created session: {session_id}")
+
+            # Prepare query - same format as working test script
+            query = f"Use the lint_ansible_playbook tool with {profile} profile to check this playbook:\n\n{playbook_content}"
+            self.logger.info(f"🚀 Calling direct agent with query")
+            
+            # Create turn - EXACT same as working test script
+            response = agent.create_turn(
+                messages=[{
+                    "role": "user",
+                    "content": query
+                }],
+                session_id=session_id,
+                stream=False  # EXACTLY like working script
+            )
+            
+            self.logger.info(f"📊 Turn completed with {len(response.steps)} steps")
+
+            # Process response using SAME logic as working test script
+            return await self._process_validation_response(response, correlation_id, profile)
+            
+        except Exception as e:
+            self.logger.error(f" Validation failed: {str(e)}")
+            return {
+                "success": False,
+                "correlation_id": correlation_id,
+                "profile": profile,
+                "error": str(e),
+                "summary": {"passed": False},
+                "issues_count": 0,
+                "issues": [],
+                "formatted_issues": f"Validation failed: {str(e)}"
+            }
+
+    async def _process_validation_response(self, response, correlation_id: str, profile: str) -> Dict[str, Any]:
+        """Process validation response - SAME LOGIC AS WORKING TEST SCRIPT"""
+        
+        found_lint = False
+        tool_results = []
+        
+        # Add step printing for debugging (optional)
+        if self.verbose_logging:
+            _step_printer(response.steps, self.logger)
+        
+        if hasattr(response, "steps"):
+            for idx, step in enumerate(response.steps):
+                step_type = getattr(step, "step_type", "unknown")
+                self.logger.info(f"📋 Step {idx+1}: {step_type}")
+                
+                # Only interested in tool_execution step with tool_responses - SAME AS TEST SCRIPT
+                if step_type == "tool_execution":
+                    self.logger.info("🔧 Found tool_execution step!")
+                    if hasattr(step, "tool_responses"):
+                        self.logger.info(f"📥 Found {len(step.tool_responses)} tool responses")
+                        for tool_response in step.tool_responses:
+                            content = getattr(tool_response, "content", "")
+                            lint_json = _get_lint_result_from_tool_response_content(content)
+                            if lint_json:
+                                found_lint = True
+                                tool_results.append(lint_json)
+                                self.logger.info(" Successfully parsed lint result!")
+                    else:
+                        self.logger.warning("⚠️ tool_execution step has no tool_responses")
+        
+        if found_lint and tool_results:
+            # Process results - SAME AS WORKING TEST SCRIPT
+            lint_json = tool_results[0]
+            
+            summary = lint_json.get("output", {}).get("summary", {})
+            issues = lint_json.get("output", {}).get("issues", [])
+            raw_output = lint_json.get("output", {}).get("raw_output", {})
+            
+            result = {
+                "success": lint_json.get("success", False),
+                "correlation_id": correlation_id,
+                "profile": profile,
+                "summary": summary,
+                "issues_count": len(issues),
+                "issues": issues,
+                "formatted_issues": _format_lint_issues(issues),
+                "passed": summary.get("passed", False),
+                "raw_stdout": raw_output.get("stdout", ""),
+                "raw_stderr": raw_output.get("stderr", ""),
+                "tool_response": lint_json,
+                "tool": lint_json.get("tool", "mcp::ansible_lint")
+            }
+            
+            self.logger.info(f" Validation completed: {len(issues)} issues found")
+            return result
+        else:
+            self.logger.warning("⚠️ No tool execution found")
+            
+            return {
+                "success": False,
+                "correlation_id": correlation_id,
+                "profile": profile,
+                "error": "No tool execution results found",
+                "summary": {"passed": False},
+                "issues_count": 0,
+                "issues": [],
+                "formatted_issues": "No tool execution occurred"
+            }
+
+    async def validate_playbook_stream(
+        self, 
+        playbook_content: str, 
+        profile: str = "basic", 
+        correlation_id: Optional[str] = None
+    ):
+        """Validate playbook with streaming updates"""
+        correlation_id = correlation_id or str(uuid.uuid4())
         
         try:
             yield {
                 "type": "progress",
-                "status": "processing",
-                "message": "🔍 Validation started",
-                "agent_info": {
-                    "agent_id": self.agent_id,
-                    "correlation_id": correlation_id
-                }
+                "status": "processing", 
+                "message": f"🔍 Validation started with {profile} profile",
+                "correlation_id": correlation_id
             }
 
-            result = await self.validate_playbook(playbook, lint_profile, correlation_id)
+            result = await self.validate_playbook(playbook_content, profile, correlation_id)
             
             yield {
-                "type": "final_validation",
-                "data": result,
-                "correlation_id": correlation_id,
-                "processing_time": round(time.time() - start_time, 2)
+                "type": "final_result",
+                "data": result
             }
         except Exception as e:
             yield {
@@ -263,25 +263,29 @@ Always call the tool first, then provide a comprehensive analysis of the results
                 "correlation_id": correlation_id
             }
 
-    def _create_error_response(self, error_message: str) -> Dict[str, Any]:
-        """Create standardized error response"""
-        return {
-            "success": False,
-            "validation_passed": False,
-            "exit_code": -1,
-            "message": f"{error_message}",
-            "summary": {
-                "passed": False,
-                "violations": 0,
-                "warnings": 0,
-                "total_issues": 0,
-                "error": True
-            },
-            "issues": [],
-            "recommendations": [],
-            "agent_analysis": f"Validation failed: {error_message}",
-            "error": error_message
-        }
+    async def validate_syntax(
+        self, 
+        playbook_content: str, 
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Quick syntax validation using basic profile"""
+        return await self.validate_playbook(
+            playbook_content=playbook_content,
+            profile="basic",
+            correlation_id=correlation_id
+        )
+
+    async def production_validate(
+        self, 
+        playbook_content: str, 
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Production-ready validation with strict rules"""
+        return await self.validate_playbook(
+            playbook_content=playbook_content,
+            profile="production", 
+            correlation_id=correlation_id
+        )
 
     def get_status(self) -> Dict[str, Any]:
         """Get current status of the validation agent"""
@@ -291,26 +295,66 @@ Always call the tool first, then provide a comprehensive analysis of the results
             "client_base_url": self.client.base_url,
             "timeout": self.timeout,
             "status": "ready",
-            "pattern": "LSS API"
+            "pattern": "Hybrid (Direct Agent Creation like working test script)",
+            "tool": "mcp::ansible_lint",
+            "supported_profiles": ["basic", "moderate", "safety", "shared", "production"]
         }
 
     async def health_check(self) -> bool:
         """Perform a health check on the validation agent"""
         try:
-            messages = [UserMessage(role="user", content="Health check")]
-            generator = self.client.agents.turn.create(
-                agent_id=self.agent_id,
-                session_id=self.session_id,
-                messages=messages,
-                stream=True,
-            )
+            test_playbook = """---
+- name: Health check playbook
+  hosts: localhost
+  tasks:
+    - name: Test task
+      debug:
+        msg: "Health check"
+"""
             
-            # Just check if we can create a turn without errors
-            for chunk in generator:
-                break  # Just need first chunk to verify connection works
+            result = await self.validate_playbook(test_playbook, "basic", "health-check")
+            is_healthy = result.get("success") is not None
             
-            self.logger.info(" Validation agent health check passed")
-            return True
+            self.logger.info(f"🏥 Validation health check: {' passed' if is_healthy else ' failed'}")
+            return is_healthy
+            
         except Exception as e:
-            self.logger.error(f" Validation agent health check failed: {e}")
+            self.logger.error(f" Validation health check failed: {e}")
             return False
+
+    def get_supported_profiles(self) -> List[str]:
+        """Get list of supported validation profiles"""
+        return ["basic", "moderate", "safety", "shared", "production"]
+
+    async def validate_multiple_files(
+        self, 
+        files: Dict[str, str], 
+        profile: str = "basic",
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """Validate multiple playbook files"""
+        correlation_id = correlation_id or str(uuid.uuid4())
+        results = {}
+        
+        for filename, content in files.items():
+            self.logger.info(f"🔍 Validating file: {filename}")
+            file_correlation = f"{correlation_id}-{filename}"
+            
+            try:
+                result = await self.validate_playbook(content, profile, file_correlation)
+                result["filename"] = filename
+                results[filename] = result
+            except Exception as e:
+                self.logger.error(f" Failed to validate {filename}: {e}")
+                results[filename] = {
+                    "success": False,
+                    "filename": filename,
+                    "correlation_id": file_correlation,
+                    "error": str(e),
+                    "summary": {"passed": False},
+                    "issues_count": 0,
+                    "issues": [],
+                    "formatted_issues": f"Failed to validate {filename}: {str(e)}"
+                }
+        
+        return results

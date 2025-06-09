@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, Dict, List
 import asyncio
 import json
 import logging
@@ -13,63 +13,70 @@ router = APIRouter(prefix="/validate", tags=["validation"])
 logger = logging.getLogger("validation_routes")
 
 def get_validation_agent(request: Request) -> ValidationAgent:
-    """Get ValidationAgent from app state """
+    """Get ValidationAgent from app state (LSS API)"""
     if not hasattr(request.app.state, 'validation_agent'):
         raise HTTPException(status_code=503, detail="ValidationAgent not available")
     return request.app.state.validation_agent
 
-class ValidationRequest(BaseModel):
-    playbook: str = Field(..., description="Ansible playbook YAML")
-    profile: str = Field(default="basic", description="Lint profile to use")
+class ValidateRequest(BaseModel):
+    playbook_content: str
+    profile: Optional[str] = "basic"
 
-class ValidatePlaybookRequest(BaseModel):
-    playbook: str = Field(..., description="Ansible playbook YAML content")
-    profile: Optional[str] = Field(default="basic", description="Lint profile to use (basic, moderate, safety, shared, production)")
+class ValidateMultipleRequest(BaseModel):
+    files: Dict[str, str]  # filename -> content
+    profile: Optional[str] = "basic"
+
+class ValidateSyntaxRequest(BaseModel):
+    playbook_content: str
 
 # === MAIN ENDPOINTS ===
 
 @router.post("/playbook")
 async def validate_playbook(
-    request: ValidatePlaybookRequest,
+    request: ValidateRequest,
     agent: ValidationAgent = Depends(get_validation_agent),
 ):
-    """Validate Ansible playbook using the validation agent"""
+    """Validate an Ansible playbook using MCP ansible_lint tool"""
     try:
+        # Validate profile
+        if request.profile not in agent.get_supported_profiles():
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported profile: {request.profile}. Supported: {agent.get_supported_profiles()}"
+            )
+        
         result = await agent.validate_playbook(
-            playbook=request.playbook,
-            lint_profile=request.profile
+            playbook_content=request.playbook_content,
+            profile=request.profile
         )
         
         return {
-            "success": result.get("success", False),
-            "validation_passed": result.get("validation_passed", False),
-            "summary": result.get("summary", {}),
-            "issues": result.get("issues", []),
-            "recommendations": result.get("recommendations", []),
-            "agent_analysis": result.get("agent_analysis", ""),
+            "success": True,
+            "validation_result": result,
             "metadata": {
-                "lint_profile": request.profile,
-                "playbook_length": len(request.playbook),
                 "timestamp": datetime.now().isoformat(),
-                "exit_code": result.get("exit_code", -1)
+                "profile": request.profile,
+                "playbook_length": len(request.playbook_content),
+                "issues_found": result.get("issues_count", 0),
+                "passed": result.get("summary", {}).get("passed", False)
             }
         }
     except Exception as e:
-        logger.error(f"Validation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Validation error: {e}")
+        logger.error(f"Playbook validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Playbook validation error: {e}")
 
 @router.post("/playbook/stream")
 async def validate_playbook_stream(
-    request: ValidatePlaybookRequest,
+    request: ValidateRequest,
     agent: ValidationAgent = Depends(get_validation_agent),
 ):
-    """Stream validation results"""
+    """Stream playbook validation results"""
     async def event_generator():
         async for event in agent.validate_playbook_stream(
-            playbook=request.playbook,
-            lint_profile=request.profile
+            playbook_content=request.playbook_content,  # Fixed: use playbook_content
+            profile=request.profile
         ):
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(
@@ -81,62 +88,103 @@ async def validate_playbook_stream(
         },
     )
 
-# === LEGACY ENDPOINTS (for backward compatibility) ===
-
-@router.post("/")
-async def validate_legacy(
-    request: ValidationRequest,
+@router.post("/multiple")
+async def validate_multiple_playbooks(
+    request: ValidateMultipleRequest,
     agent: ValidationAgent = Depends(get_validation_agent),
 ):
-    """Legacy endpoint - maintains old interface"""
+    """Validate multiple playbook files"""
     try:
-        result = await agent.validate_playbook(
-            playbook=request.playbook,
-            lint_profile=request.profile
+        if not request.files:
+            raise HTTPException(status_code=400, detail="No files provided")
+        
+        # Validate profile
+        if request.profile not in agent.get_supported_profiles():
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported profile: {request.profile}. Supported: {agent.get_supported_profiles()}"
+            )
+        
+        results = await agent.validate_multiple_files(
+            files=request.files,
+            profile=request.profile
         )
-        return result
+        
+        # Calculate summary statistics
+        total_files = len(results)
+        passed_files = sum(1 for r in results.values() if r.get("summary", {}).get("passed", False))
+        total_issues = sum(r.get("issues_count", 0) for r in results.values())
+        
+        return {
+            "success": True,
+            "results": results,
+            "summary": {
+                "total_files": total_files,
+                "passed_files": passed_files,
+                "failed_files": total_files - passed_files,
+                "total_issues": total_issues,
+                "profile": request.profile
+            },
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "profile": request.profile
+            }
+        }
     except Exception as e:
-        logger.error(f"Legacy validation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Validation error: {e}")
+        logger.error(f"Multiple file validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Multiple file validation error: {e}")
 
-@router.post("/stream")
-async def validate_legacy_stream(
-    request: ValidationRequest,
+@router.post("/syntax")
+async def validate_syntax(
+    request: ValidateSyntaxRequest,
     agent: ValidationAgent = Depends(get_validation_agent),
 ):
-    """Legacy streaming endpoint - maintains old interface"""
-    async def event_generator():
-        try:
-            async for event in agent.validate_playbook_stream(
-                playbook=request.playbook,
-                lint_profile=request.profile
-            ):
-                # Convert to legacy format
-                if event.get("type") == "progress":
-                    yield f"data: {json.dumps({'event': 'start', 'timestamp': datetime.now().isoformat(), 'msg': 'Validation started'})}\n\n"
-                elif event.get("type") == "final_validation":
-                    result_data = event.get("data", {})
-                    legacy_event = {
-                        'event': 'result',
-                        **result_data,
-                        'timestamp': datetime.now().isoformat(),
-                        'processing_time': event.get('processing_time', 0)
-                    }
-                    yield f"data: {json.dumps(legacy_event)}\n\n"
-                elif event.get("type") == "error":
-                    error_msg = event.get("error", "Unknown error")
-                    yield f"data: {json.dumps({'event': 'error', 'msg': f'Validation failed: {error_msg}', 'timestamp': datetime.now().isoformat()})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'event': 'error', 'msg': f'Validation failed: {str(e)}', 'timestamp': datetime.now().isoformat()})}\n\n"
+    """Quick syntax validation using basic profile"""
+    try:
+        result = await agent.validate_syntax(
+            playbook_content=request.playbook_content
+        )
+        
+        return {
+            "success": True,
+            "syntax_valid": result.get("summary", {}).get("passed", False),
+            "issues": result.get("issues", []),
+            "formatted_issues": result.get("formatted_issues", ""),
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "validation_type": "syntax_check",
+                "issues_count": result.get("issues_count", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Syntax validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Syntax validation error: {e}")
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
+@router.post("/production")
+async def production_validate(
+    request: ValidateRequest,
+    agent: ValidationAgent = Depends(get_validation_agent),
+):
+    """Production-ready validation with strict rules"""
+    try:
+        result = await agent.production_validate(
+            playbook_content=request.playbook_content
+        )
+        
+        return {
+            "success": True,
+            "production_ready": result.get("summary", {}).get("passed", False),
+            "validation_result": result,
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "profile": "production",
+                "playbook_length": len(request.playbook_content),
+                "issues_found": result.get("issues_count", 0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Production validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Production validation error: {e}")
 
 # === STATUS AND HEALTH ENDPOINTS ===
 
@@ -149,6 +197,7 @@ async def get_validation_status(
         return {
             "status": "ready",
             "agent_info": agent.get_status(),
+            "supported_profiles": agent.get_supported_profiles(),
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -164,8 +213,9 @@ async def validation_health_check(
         is_healthy = await agent.health_check()
         return {
             "healthy": is_healthy,
-            "agent_id": agent.agent_id,
-            "pattern": "LSS API",
+            "agent_id": getattr(agent, 'agent_id', 'unknown'),
+            "pattern": "Registry-based",
+            "tool": "mcp::ansible_lint",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -175,3 +225,21 @@ async def validation_health_check(
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+@router.get("/profiles")
+async def get_supported_profiles(
+    agent: ValidationAgent = Depends(get_validation_agent),
+):
+    """Get list of supported validation profiles"""
+    return {
+        "profiles": agent.get_supported_profiles(),
+        "descriptions": {
+            "basic": "Basic syntax and structure validation",
+            "moderate": "Standard best practices checking", 
+            "safety": "Security-focused validation rules",
+            "shared": "Rules for shared/reusable playbooks",
+            "production": "Strict production-ready validation"
+        },
+        "default": "basic",
+        "timestamp": datetime.now().isoformat()
+    }

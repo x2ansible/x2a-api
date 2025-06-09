@@ -706,7 +706,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
             return self._enhance_for_ui_display(result, correlation_id)
             
         except Exception as e:
-            logger.error(f"[{correlation_id}] ❌ Pydantic validation failed: {e}")
+            logger.error(f"[{correlation_id}]  Pydantic validation failed: {e}")
             result = self._make_complete_response(parsed, correlation_id, cookbook_name, fallback_defaults, error=str(e))
             return self._enhance_for_ui_display(result, correlation_id)
 
