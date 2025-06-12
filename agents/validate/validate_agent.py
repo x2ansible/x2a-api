@@ -254,6 +254,7 @@ class ValidationAgent:
             # Use registry pattern - same as ContextAgent
             messages = [UserMessage(role="user", content=user_prompt)]
             
+            # Create turn with timeout handling
             generator = self.client.agents.turn.create(
                 agent_id=self.agent_id,
                 session_id=query_session_id,
@@ -261,9 +262,17 @@ class ValidationAgent:
                 stream=True,
             )
             
-            # Process streaming response
+            # Process streaming response with timeout
             turn = None
+            timeout_seconds = min(self.timeout, 120)  # Cap at 2 minutes
+            timeout_start = time.time()
+            
             for chunk in generator:
+                # Check for timeout
+                if time.time() - timeout_start > timeout_seconds:
+                    self.logger.warning(f"⚠️ Turn processing timeout after {timeout_seconds}s")
+                    raise TimeoutError(f"Validation timeout after {timeout_seconds} seconds")
+                
                 event = chunk.event
                 event_type = event.payload.event_type
                 if event_type == "turn_complete":
@@ -288,6 +297,21 @@ class ValidationAgent:
             total_time = time.time() - start_time
             return await self._process_validation_response(turn, correlation_id, profile, total_time)
             
+        except TimeoutError as e:
+            total_time = time.time() - start_time
+            self.logger.error(f"⏰ Validation timeout after {total_time:.3f}s: {str(e)}")
+            return {
+                "success": False,
+                "correlation_id": correlation_id,
+                "profile": profile,
+                "error": f"Validation timeout: {str(e)}",
+                "summary": {"passed": False},
+                "issues_count": 0,
+                "issues": [],
+                "formatted_issues": f"Validation timed out after {total_time:.1f} seconds",
+                "elapsed_time": total_time,
+                "timeout": True
+            }
         except Exception as e:
             total_time = time.time() - start_time
             self.logger.error(f" Validation failed after {total_time:.3f}s: {str(e)}")
@@ -305,6 +329,11 @@ class ValidationAgent:
 
     def _build_validation_prompt(self, playbook_content: str, profile: str) -> str:
         """Build effective user prompt that explicitly requests tool usage"""
+        # Check playbook size to prevent timeouts
+        max_size = 50000  # 50KB limit
+        if len(playbook_content) > max_size:
+            raise ValueError(f"Playbook too large ({len(playbook_content)} chars). Maximum size: {max_size} characters")
+        
         # Add newline to playbook content if missing (fixes common issue)
         if not playbook_content.endswith('\n'):
             playbook_content += '\n'
