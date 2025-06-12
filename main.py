@@ -62,7 +62,7 @@ class AgentRegistry:
                 # Match by actual name, ignore None/null agents
                 if existing_name and existing_name == agent_name:
                     agent_id = agent.get("agent_id")
-                    logger.info(f" Found existing agent: {agent_name} with ID: {agent_id}")
+                    logger.info(f"🔍 Found existing agent: {agent_name} with ID: {agent_id}")
                     return agent_id
                     
         except Exception as e:
@@ -178,7 +178,7 @@ class AgentRegistry:
             session_id = response.session_id
             self.sessions[agent_name] = session_id
             
-            logger.info(f" Created session {session_id} for agent: {agent_name}")
+            logger.info(f"📱 Created session {session_id} for agent: {agent_name}")
             return session_id
             
         except Exception as e:
@@ -259,24 +259,30 @@ async def lifespan(app: FastAPI):
     agent_manager = AgentManager(llamastack_base_url)
     app.state.agent_manager = agent_manager
 
-    # === Setup ChefAnalysisAgent with Prompt Chaining Support ===
-    if "chef_analysis_chaining" in registered_agents:
+    # === Setup ChefAnalysisAgent (Standard Method Only) ===
+    # Check for both possible agent names in config
+    chef_agent_name = None
+    if "chef_analysis" in registered_agents:
+        chef_agent_name = "chef_analysis"
+    elif "chef_analysis_chaining" in registered_agents:
+        chef_agent_name = "chef_analysis_chaining"
+    
+    if chef_agent_name:
         from agents.chef_analysis.agent import ChefAnalysisAgent
         
-        chef_info = registered_agents["chef_analysis_chaining"]
+        chef_info = registered_agents[chef_agent_name]
         
-        # Initialize ChefAnalysisAgent with prompt chaining capability
+        # Initialize ChefAnalysisAgent with standard analysis only
         chef_agent = ChefAnalysisAgent(
             client=client,
             agent_id=chef_info["agent_id"],
-            session_id=chef_info["session_id"],
-            enable_prompt_chaining=True  # Enable prompt chaining
+            session_id=chef_info["session_id"]
         )
         
         app.state.chef_analysis_agent = chef_agent
-        logger.info(f"🍳 ChefAnalysisAgent ready with prompt chaining: agent_id={chef_info['agent_id']}")
+        logger.info(f"🍳 ChefAnalysisAgent ready (standard method): agent_id={chef_info['agent_id']}")
     else:
-        logger.error(" chef_analysis_chaining agent not found in config!")
+        logger.error(" chef_analysis agent not found in config!")
 
     # === Setup ContextAgent ===
     if "context" in registered_agents:
@@ -313,17 +319,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ generate agent not found in config!")
 
-    # === Setup ValidationAgent (Registry Pattern - NO MORE DUPLICATES!) ===
+    # === Setup ValidationAgent
     if "validate" in registered_agents:
         validation_info = registered_agents["validate"]
         app.state.validation_agent = ValidationAgent(
             client=client,
             agent_id=validation_info["agent_id"],
-            session_id=validation_info["session_id"]
+            session_id=validation_info["session_id"],
+            verbose_logging=True  # Enable detailed logging for debugging
         )
-        logger.info(f"🔍 ValidationAgent ready (registry pattern): agent_id={validation_info['agent_id']}")
+        logger.info(f"🔍 ValidationAgent ready : agent_id={validation_info['agent_id']}")
+        
+        # Log validation agent configuration for verification
+        validation_config = validation_info["config"]
+        logger.info(f"🔍 ValidationAgent config: tools={validation_config.get('tools', [])}")
+        logger.info(f"🔍 ValidationAgent tool_config: {validation_config.get('tool_config', {})}")
+        logger.info(f"🔍 ValidationAgent instructions: {validation_config.get('instructions', '')[:100]}...")
     else:
-        logger.warning("⚠️ validate agent not found in config!")
+        logger.error(" validate agent not found in config!")
 
     # --- File upload directory setup ---
     upload_dir = os.getenv("UPLOAD_DIR")
@@ -353,7 +366,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Vector DB setup failed: {e}")
 
-    logger.info(" X2A Agents API startup complete - ")
+    logger.info(" X2A Agents API startup complete")
     
     yield
     
@@ -363,7 +376,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="X2A Agents API",
     version="1.0.0", 
-    description="Multi-agent IaC API with Registry Pattern (No Duplicates)",
+    description="Multi-agent IaC API ",
     lifespan=lifespan
 )
 
@@ -390,20 +403,21 @@ async def root():
     
     return {
         "status": "ok",
-        "message": " Welcome to X2A multi-agent API with NO DUPLICATE AGENTS!",
+        "message": " Welcome to X2A multi-agent API ",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
         "agent_pattern": "Registry-based (All agents)",
+        "validation_agent": "Using MCP for Ansible Lint",
         "duplicate_prevention": "Active for ALL agents including ValidationAgent",
-        "prompt_chaining": "Enabled for ChefAnalysisAgent",
-        "mcp_tools": "Properly configured via registry",
+        "analysis_method": "Standard single-prompt analysis",
+        "mcp_tools": "Properly configured via registry (mcp::ansible_lint)",
         "services": [
             "admin - Agent management",
-            "chef - Chef cookbook analysis (with prompt chaining)",
+            "chef - Chef cookbook analysis (standard method)",
             "context - Knowledge search", 
             "files - File upload/management",
             "generate - Code generation",
-            "validate - Playbook validation (MCP mcp::ansible_lint)",
+            "validate - Playbook validation (using MCP mcp::ansible_lint)",
             "vector-db - Vector database management"
         ]
     }
@@ -432,7 +446,7 @@ async def get_agents_status():
     if hasattr(app.state, 'chef_analysis_agent'):
         specialized_agents["chef_analysis"] = {
             "type": "ChefAnalysisAgent",
-            "prompt_chaining": "enabled",
+            "method": "standard",
             "status": app.state.chef_analysis_agent.get_status()
         }
     
@@ -453,8 +467,9 @@ async def get_agents_status():
         specialized_agents["validation"] = {
             "type": "ValidationAgent",
             "tool": "mcp::ansible_lint", 
-            "pattern": "Registry-based (NO MORE DUPLICATES!)",
-            "status": app.state.validation_agent.get_status()
+            "pattern": "Using MCP based Ansible Lint",
+            "status": app.state.validation_agent.get_status(),
+            "enhancement": "Enhanced with better session management, streaming, and error handling"
         }
     
     return {
@@ -463,13 +478,15 @@ async def get_agents_status():
         "specialized_agents": specialized_agents,
         "llamastack_url": llamastack_base_url,
         "pattern": "Complete Registry Pattern - No Duplicates",
+        "validation_agent_status": "working",
         "duplicate_prevention": "Active for ALL agents including ValidationAgent",
         "summary": {
             "total_agents": len(registry_status["agents"]),
             "active_sessions": len(registry_status["sessions"]),
             "specialized_wrappers": len(specialized_agents),
-            "prompt_chaining_enabled": True,
-            "mcp_validation_fixed": True
+            "analysis_method": "standard",
+            "mcp_validation_fixed": True,
+            "validation_agent_refactored": True
         }
     }
 
@@ -506,29 +523,22 @@ async def get_chef_features():
     return {
         "agent_name": "ChefAnalysisAgent",
         "features": {
-            "prompt_chaining": {
-                "enabled": True,
-                "description": "Multi-step analysis with context awareness",
-                "steps": [
-                    "Structure Analysis - Identifies cookbook type and complexity",
-                    "Version Analysis - Determines Chef/Ruby requirements", 
-                    "Dependency Analysis - Maps wrapper patterns and dependencies",
-                    "Functionality Analysis - Assesses purpose and reusability",
-                    "Recommendations - Provides strategic migration guidance"
-                ],
+            "analysis_method": {
+                "type": "standard",
+                "description": "Single comprehensive prompt analysis",
                 "benefits": [
-                    "Better JSON reliability",
-                    "Enhanced reasoning quality",
-                    "Context-aware analysis",
-                    "Improved debugging capabilities",
-                    "Progressive failure handling"
+                    "Fast execution",
+                    "Simple architecture", 
+                    "Reliable results",
+                    "Lower resource usage"
                 ]
             },
-            "analysis_methods": {
-                "default": "prompt_chaining",
-                "available": ["standard", "prompt_chaining"],
-                "recommendation": "Use prompt_chaining for better results"
-            },
+            "capabilities": [
+                "Version Requirements Analysis - Chef/Ruby version detection",
+                "Dependency Analysis - Wrapper patterns and dependencies", 
+                "Functionality Assessment - Purpose and reusability analysis",
+                "Strategic Recommendations - Migration guidance"
+            ],
             "session_management": "Dedicated sessions per analysis",
             "streaming_support": "Real-time progress updates",
             "error_handling": "Graceful fallbacks with partial results"
@@ -537,8 +547,7 @@ async def get_chef_features():
             "endpoint": "/api/chef/analyze",
             "method": "POST",
             "payload": {
-                "files": {"metadata.rb": "...", "recipes/default.rb": "..."},
-                "method": "chaining"  # Optional: defaults to chaining
+                "files": {"metadata.rb": "...", "recipes/default.rb": "..."}
             }
         }
     }
@@ -548,12 +557,24 @@ async def get_validate_features():
     """Get information about Validation agent features"""
     return {
         "agent_name": "ValidationAgent",
+        "status": "working",
         "features": {
+            "architecture_update": {
+                "old_pattern": "Direct Agent creation (inefficient)",
+                "new_pattern": "Registry-based (following ContextAgent)",
+                "benefits": [
+                    "No more duplicate agents",
+                    "Consistent session management",
+                    "Better resource utilization",
+                    "Enhanced error handling",
+                    "Improved streaming support"
+                ]
+            },
             "mcp_tool_integration": {
                 "enabled": True,
                 "tool": "mcp::ansible_lint",
-                "pattern": "Registry-based (NO MORE DUPLICATES!)",
-                "description": "Direct integration with Ansible Lint via MCP tools using existing agent"
+                "pattern": "Registry-based with pre-configured MCP tools",
+                "description": "Direct integration with Ansible Lint via MCP tools using existing registered agent"
             },
             "validation_profiles": {
                 "available": ["basic", "moderate", "safety", "shared", "production"],
@@ -566,17 +587,21 @@ async def get_validate_features():
                     "production": "Strict production-ready validation"
                 }
             },
-            "session_management": "Dedicated sessions per validation",
-            "streaming_support": "Real-time validation progress",
-            "multiple_file_support": "Batch validation capabilities",
-            "duplicate_prevention": "Uses registry pattern - no more agent duplication!"
+            "session_management": "Enhanced - Dedicated sessions per validation with correlation IDs",
+            "streaming_support": "Improved - Real-time validation progress with better error handling",
+            "multiple_file_support": "Enhanced - Batch validation capabilities with detailed results",
+            "duplicate_prevention": "Active - Registry pattern prevents agent duplication",
+            "enhanced_logging": "Detailed step-by-step logging with visual indicators",
+            "health_checks": "Comprehensive health monitoring"
         },
         "endpoints": {
             "validate_playbook": "/api/validate/playbook",
             "syntax_check": "/api/validate/syntax", 
             "production_validate": "/api/validate/production",
             "multiple_files": "/api/validate/multiple",
-            "streaming": "/api/validate/playbook/stream"
+            "streaming": "/api/validate/playbook/stream",
+            "agent_info": "/api/validate/agent-info",
+            "test": "/api/validate/test"
         },
         "usage": {
             "basic_validation": {
@@ -587,5 +612,12 @@ async def get_validate_features():
                     "profile": "basic"
                 }
             }
+        },
+        "improvements": {
+            "architecture": "Now follows proven ContextAgent pattern",
+            "efficiency": "Uses registered agents instead of creating new ones",
+            "reliability": "Enhanced error handling and fallback responses",
+            "monitoring": "Better logging and status reporting",
+            "consistency": "Consistent with other agents in the system"
         }
     }
