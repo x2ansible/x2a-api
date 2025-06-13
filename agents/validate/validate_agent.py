@@ -135,7 +135,7 @@ def _step_printer(steps, logger_instance=None):
 
 class ValidationAgent:
     """
-    ValidationAgent - Registry pattern following ContextAgent architecture
+    ValidationAgent
     Uses pre-registered agent with mcp::ansible_lint tool configured
     """
     
@@ -677,7 +677,7 @@ Profile: {profile}"""
             "client_base_url": self.client.base_url,
             "timeout": self.timeout,
             "status": "ready",
-            "pattern": "Registry-based (following ContextAgent architecture)",
+            "pattern": "Registry-based ",
             "tool": "mcp::ansible_lint",
             "supported_profiles": self.supported_profiles
         }
