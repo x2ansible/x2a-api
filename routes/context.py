@@ -93,7 +93,7 @@ async def ingest_document(
         for encoding in encodings:
             try:
                 text_content = content.decode(encoding)
-                logger.info(f"✅ Successfully decoded file with {encoding}")
+                logger.info(f" Successfully decoded file with {encoding}")
                 break
             except UnicodeDecodeError:
                 continue
@@ -114,7 +114,7 @@ async def ingest_document(
                 file_type=file_extension
             )
             
-            logger.info(f"✅ Successfully processed file: {file.filename}")
+            logger.info(f" Successfully processed file: {file.filename}")
             
             return {
                 "success": True,
@@ -139,7 +139,7 @@ async def ingest_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Document ingest error: {e}")
+        logger.error(f" Document ingest error: {e}")
         raise HTTPException(status_code=500, detail=f"Document ingest failed: {str(e)}")
 
 
@@ -190,7 +190,7 @@ async def simple_ingest_fallback(content: str, filename: str, file_type: str) ->
         }
         
     except Exception as e:
-        logger.error(f"❌ Fallback processing failed for {filename}: {e}")
+        logger.error(f" Fallback processing failed for {filename}: {e}")
         raise
 
 # === EXISTING ENDPOINTS (keep all your existing code below) ===
