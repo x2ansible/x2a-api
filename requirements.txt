@@ -1,10 +1,108 @@
-fastapi
-httpx
-uvicorn
-pyyaml
-pydantic
-gunicorn
+# Complete Requirements for Enhanced ChefAnalysisAgent with Tree-sitter Integration
+
+# Core FastAPI and web framework dependencies
+fastapi>=0.104.0
+httpx>=0.25.0
+uvicorn>=0.24.0
+gunicorn>=21.0.0
+pydantic>=2.4.0
+
+# HTTP client and utilities
+requests>=2.31.0
+
+# YAML parsing for configuration
+PyYAML>=6.0
+
+# LlamaStack client
 llama-stack-client
-requests
+
+# MCP (Model Context Protocol) support
 fastmcp
 fire
+
+# NEW: Tree-sitter core dependencies for structural analysis
+tree-sitter>=0.20.0
+tree-sitter-languages>=1.7.0
+
+# Enhanced regex support for pattern matching
+regex>=2022.0.0
+
+# Optional: Additional parsing libraries for future extensibility
+
+# HCL parsing for Terraform support (future)
+# python-hcl2>=4.0.0
+
+# Shell script parsing (future)  
+# bashlex>=0.18
+
+# JSON schema validation (for config validation)
+# jsonschema>=4.0.0
+
+# Performance monitoring (optional)
+# psutil>=5.9.0
+
+# Async file operations (optional)
+# aiofiles>=23.0.0
+
+# Installation Instructions:
+#
+# 1. Basic installation (required):
+#    pip install -r requirements.txt
+#
+# 2. Tree-sitter system dependencies (may be required):
+#    
+#    Ubuntu/Debian:
+#    sudo apt-get update
+#    sudo apt-get install build-essential
+#    
+#    macOS:
+#    # Xcode command line tools should be sufficient
+#    xcode-select --install
+#    # If needed: brew install gcc
+#    
+#    Windows:
+#    # Install Visual Studio Build Tools or Visual Studio Community
+#    # Download from: https://visualstudio.microsoft.com/downloads/
+#    # Or use conda: conda install -c conda-forge tree-sitter
+#
+# 3. Verification:
+#    python -c "from tree_sitter_languages import get_parser; print('Tree-sitter OK')"
+#
+# 4. Testing Chef parsing specifically:
+#    python -c "
+#    from tree_sitter_languages import get_parser
+#    parser = get_parser('ruby')
+#    tree = parser.parse(b'package \"nginx\" do\n  action :install\nend')
+#    print('Chef parsing OK' if not tree.root_node.has_error else 'Parse error')
+#    "
+#
+# 5. Testing YAML parsing for Ansible (future):
+#    python -c "
+#    from tree_sitter_languages import get_parser
+#    parser = get_parser('yaml')
+#    tree = parser.parse(b'---\n- name: Install nginx\n  package:\n    name: nginx')
+#    print('YAML parsing OK' if not tree.root_node.has_error else 'Parse error')
+#    "
+#
+# Troubleshooting:
+#
+# If tree-sitter installation fails:
+# 1. Try conda instead of pip:
+#    conda install -c conda-forge tree-sitter py-tree-sitter-languages
+#
+# 2. Or install from source:
+#    git clone https://github.com/tree-sitter/py-tree-sitter
+#    cd py-tree-sitter
+#    pip install .
+#
+# 3. For Windows without Visual Studio:
+#    pip install --only-binary=all tree-sitter tree-sitter-languages
+#
+# Note: tree-sitter requires a C compiler to build language parsers
+# The tree-sitter-languages package includes pre-built parsers for:
+# - ruby (Chef cookbooks)
+# - yaml (Ansible playbooks) 
+# - python (Pulumi, etc.)
+# - hcl (Terraform)
+# - bash (Shell scripts)
+# - And many more languages for future extensibility

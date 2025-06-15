@@ -1,0 +1,259 @@
+# shared/tree_sitter_config.yaml
+# Tree-sitter Analyzer Configuration
+# Shared configuration for structural analysis across all IaC formats
+
+# Core Tree-sitter settings
+enabled: true
+timeout_seconds: 30
+max_file_size_mb: 10
+enable_error_recovery: true
+
+# Supported programming languages
+supported_languages:
+  - ruby      # Chef cookbooks
+  - yaml      # Ansible playbooks
+  - python    # Python-based IaC (Pulumi, etc.)
+  - hcl       # Terraform
+  - bash      # Shell scripts
+  - puppet    # Puppet manifests (future)
+
+# Language-specific parsing settings
+language_settings:
+  ruby:
+    enable_syntax_highlighting: true
+    extract_method_calls: true
+    extract_class_definitions: true
+    
+  yaml:
+    validate_structure: true
+    extract_key_values: true
+    check_indentation: true
+    
+  hcl:
+    extract_resources: true
+    extract_variables: true
+    validate_blocks: true
+    
+  bash:
+    extract_functions: true
+    extract_variables: true
+    check_shebang: true
+
+# Chef-specific extraction settings
+chef:
+  extract_resources: true
+  extract_dependencies: true
+  extract_metadata: true
+  
+  # Resource types to extract
+  resource_types:
+    - package
+    - service
+    - file
+    - template
+    - directory
+    - cookbook_file
+    - remote_file
+    - user
+    - group
+    - cron
+    - execute
+    - script
+    - mount
+    - link
+    
+  # Dependency extraction
+  dependency_patterns:
+    - include_recipe
+    - depends
+    - cookbook_name
+    
+  # Metadata fields to extract
+  metadata_fields:
+    - name
+    - version
+    - description
+    - maintainer
+    - license
+    - chef_version
+    - supports
+    - depends
+
+# Ansible-specific extraction settings  
+ansible:
+  extract_tasks: true
+  extract_variables: true
+  extract_handlers: true
+  extract_roles: true
+  
+  # Task modules to recognize
+  task_modules:
+    - package
+    - service
+    - file
+    - template
+    - copy
+    - command
+    - shell
+    - script
+    - user
+    - group
+    - cron
+    - mount
+    - systemd
+    - yum
+    - apt
+    - pip
+    
+  # Variable extraction
+  variable_patterns:
+    - vars
+    - defaults
+    - group_vars
+    - host_vars
+
+# Terraform-specific extraction settings
+terraform:
+  extract_resources: true
+  extract_variables: true
+  extract_outputs: true
+  extract_modules: true
+  
+  # Resource types to recognize
+  resource_types:
+    - aws_instance
+    - aws_s3_bucket
+    - google_compute_instance
+    - azurerm_virtual_machine
+    - kubernetes_deployment
+    - helm_release
+    
+  # Provider extraction
+  providers:
+    - aws
+    - google
+    - azurerm
+    - kubernetes
+    - helm
+    - local
+    - null
+
+# Shell script extraction settings
+shell:
+  extract_functions: true
+  extract_variables: true
+  extract_commands: true
+  
+  # Command patterns to recognize
+  command_patterns:
+    - apt-get
+    - yum
+    - systemctl
+    - service
+    - docker
+    - kubectl
+    - curl
+    - wget
+    - git
+
+# Performance and reliability settings
+performance:
+  # File processing limits
+  max_files_per_analysis: 100
+  max_content_length: 1048576  # 1MB per file
+  
+  # Parsing timeouts
+  parse_timeout_seconds: 10
+  total_analysis_timeout_seconds: 300
+  
+  # Memory management
+  enable_gc_after_analysis: true
+  max_memory_usage_mb: 512
+
+# Error handling and fallback
+error_handling:
+  # When Tree-sitter fails
+  continue_on_parse_errors: true
+  log_parse_errors: true
+  provide_fallback_analysis: true
+  
+  # Syntax error tolerance
+  max_syntax_errors_per_file: 10
+  ignore_minor_syntax_errors: true
+  
+  # Graceful degradation
+  fallback_to_regex_parsing: true
+  fallback_confidence_reduction: 0.3
+
+# Logging and debugging
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  log_parse_details: false
+  log_extraction_stats: true
+  log_performance_metrics: true
+  
+  # Debug settings (for development)
+  debug_mode: false
+  dump_ast_on_error: false
+  save_failed_parses: false
+
+# Output formatting
+output:
+  # Structure of extracted facts
+  include_line_numbers: true
+  include_file_metrics: true
+  include_confidence_scores: true
+  
+  # Deduplication
+  remove_duplicates: true
+  normalize_resource_names: true
+  
+  # Validation
+  validate_extracted_facts: true
+  cross_reference_dependencies: true
+
+# Extension and customization
+extensions:
+  # Custom resource patterns (can be added by specific agents)
+  custom_chef_resources: []
+  custom_ansible_modules: []
+  custom_terraform_resources: []
+  
+  # Plugin support
+  enable_custom_extractors: false
+  custom_extractor_directory: "custom/extractors"
+  
+  # Format-specific overrides
+  format_overrides: {}
+
+# Future format support (extensible)
+future_formats:
+  puppet:
+    enabled: false
+    language: puppet
+    resource_types:
+      - package
+      - service
+      - file
+      - exec
+      - cron
+      - user
+      - group
+    
+  bladelogic:
+    enabled: false
+    language: nsh  # Network Shell
+    patterns:
+      - nexec
+      - blcli
+      - Job
+      - Package
+      - Policy
+  
+  pulumi:
+    enabled: false
+    language: python  # or typescript, go
+    patterns:
+      - pulumi.
+      - "@pulumi/"
+      - "import pulumi"
