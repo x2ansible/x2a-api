@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from routes.admin import router as admin_router
 from routes.chef import router as chef_router
+from routes.bladelogic import router as bladelogic_router  # NEW: BladeLogic router
 from routes.context import router as context_router
 from routes.files import router as files_router
 from routes.generate import router as generate_router
@@ -213,7 +214,7 @@ agent_registry = None
 async def lifespan(app: FastAPI):
     global agent_registry
     
-    logger.info("🚀 Starting X2A Agents API...")
+    logger.info("🚀 Starting X2A Agents API with BladeLogic support...")
     
     # Initialize single client and registry
     client = LlamaStackClient(base_url=llamastack_base_url)
@@ -282,7 +283,25 @@ async def lifespan(app: FastAPI):
         app.state.chef_analysis_agent = chef_agent
         logger.info(f"🍳 ChefAnalysisAgent ready (standard method): agent_id={chef_info['agent_id']}")
     else:
-        logger.error(" chef_analysis agent not found in config!")
+        logger.warning("⚠️ chef_analysis agent not found in config!")
+
+    # === Setup BladeLogicAnalysisAgent (NEW) ===
+    if "bladelogic_analysis" in registered_agents:
+        from agents.bladelogic_analysis.agent import BladeLogicAnalysisAgent
+        
+        bladelogic_info = registered_agents["bladelogic_analysis"]
+        
+        # Initialize BladeLogicAnalysisAgent
+        bladelogic_agent = BladeLogicAnalysisAgent(
+            client=client,
+            agent_id=bladelogic_info["agent_id"],
+            session_id=bladelogic_info["session_id"]
+        )
+        
+        app.state.bladelogic_analysis_agent = bladelogic_agent
+        logger.info(f"🔧 BladeLogicAnalysisAgent ready: agent_id={bladelogic_info['agent_id']}")
+    else:
+        logger.warning("⚠️ bladelogic_analysis agent not found in config!")
 
     # === Setup ContextAgent ===
     if "context" in registered_agents:
@@ -319,7 +338,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ generate agent not found in config!")
 
-    # === Setup ValidationAgent
+    # === Setup ValidationAgent ===
     if "validate" in registered_agents:
         validation_info = registered_agents["validate"]
         app.state.validation_agent = ValidationAgent(
@@ -328,7 +347,7 @@ async def lifespan(app: FastAPI):
             session_id=validation_info["session_id"],
             verbose_logging=True  # Enable detailed logging for debugging
         )
-        logger.info(f"🔍 ValidationAgent ready : agent_id={validation_info['agent_id']}")
+        logger.info(f"🔍 ValidationAgent ready: agent_id={validation_info['agent_id']}")
         
         # Log validation agent configuration for verification
         validation_config = validation_info["config"]
@@ -366,7 +385,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Vector DB setup failed: {e}")
 
-    logger.info(" X2A Agents API startup complete")
+    logger.info(" X2A Agents API startup complete with BladeLogic support")
     
     yield
     
@@ -376,7 +395,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="X2A Agents API",
     version="1.0.0", 
-    description="Multi-agent IaC API ",
+    description="Multi-agent IaC API with BladeLogic support",
     lifespan=lifespan
 )
 
@@ -388,8 +407,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include all routers
 app.include_router(admin_router, prefix="/api")
 app.include_router(chef_router, prefix="/api")
+app.include_router(bladelogic_router, prefix="/api")  # NEW: BladeLogic router
 app.include_router(context_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(generate_router, prefix="/api")
@@ -403,17 +424,19 @@ async def root():
     
     return {
         "status": "ok",
-        "message": " Welcome to X2A multi-agent API ",
+        "message": " Welcome to X2A multi-agent API with BladeLogic support",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Registry-based (All agents)",
+        "agent_pattern": "Registry-based (All agents including BladeLogic)",
         "validation_agent": "Using MCP for Ansible Lint",
-        "duplicate_prevention": "Active for ALL agents including ValidationAgent",
+        "bladelogic_support": "Enterprise BladeLogic automation analysis",
+        "duplicate_prevention": "Active for ALL agents including BladeLogic",
         "analysis_method": "Standard single-prompt analysis",
         "mcp_tools": "Properly configured via registry (mcp::ansible_lint)",
         "services": [
             "admin - Agent management",
             "chef - Chef cookbook analysis (standard method)",
+            "bladelogic - BladeLogic automation analysis (NEW)",
             "context - Knowledge search", 
             "files - File upload/management",
             "generate - Code generation",
@@ -424,7 +447,7 @@ async def root():
 
 @app.get("/api/agents/status")
 async def get_agents_status():
-    """Get detailed status for ALL agents"""
+    """Get detailed status for ALL agents including BladeLogic"""
     if not agent_registry:
         return {"error": "Agent registry not initialized"}
     
@@ -448,6 +471,16 @@ async def get_agents_status():
             "type": "ChefAnalysisAgent",
             "method": "standard",
             "status": app.state.chef_analysis_agent.get_status()
+        }
+    
+    # NEW: BladeLogic agent status
+    if hasattr(app.state, 'bladelogic_analysis_agent'):
+        specialized_agents["bladelogic_analysis"] = {
+            "type": "BladeLogicAnalysisAgent",
+            "method": "expert_bladelogic_analysis",
+            "status": app.state.bladelogic_analysis_agent.get_status(),
+            "supported_types": ["JOB", "PACKAGE", "POLICY", "SCRIPT", "COMPLIANCE_TEMPLATE"],
+            "automation_types": ["COMPLIANCE", "PATCHING", "DEPLOYMENT", "CONFIGURATION", "MONITORING"]
         }
     
     if hasattr(app.state, 'context_agent'):
@@ -479,14 +512,16 @@ async def get_agents_status():
         "llamastack_url": llamastack_base_url,
         "pattern": "Complete Registry Pattern - No Duplicates",
         "validation_agent_status": "working",
-        "duplicate_prevention": "Active for ALL agents including ValidationAgent",
+        "bladelogic_agent_status": "working" if hasattr(app.state, 'bladelogic_analysis_agent') else "not_configured",
+        "duplicate_prevention": "Active for ALL agents including BladeLogic",
         "summary": {
             "total_agents": len(registry_status["agents"]),
             "active_sessions": len(registry_status["sessions"]),
             "specialized_wrappers": len(specialized_agents),
             "analysis_method": "standard",
             "mcp_validation_fixed": True,
-            "validation_agent_refactored": True
+            "validation_agent_refactored": True,
+            "bladelogic_integrated": True
         }
     }
 
@@ -552,6 +587,71 @@ async def get_chef_features():
         }
     }
 
+@app.get("/api/bladelogic/features")
+async def get_bladelogic_features():
+    """Get information about BladeLogic analysis features (NEW)"""
+    return {
+        "agent_name": "BladeLogicAnalysisAgent",
+        "status": "ready",
+        "features": {
+            "analysis_method": {
+                "type": "expert_bladelogic_analysis",
+                "description": "Enterprise-grade BladeLogic automation analysis with pattern recognition",
+                "benefits": [
+                    "Expert BladeLogic knowledge",
+                    "Enterprise context awareness", 
+                    "Ansible migration guidance",
+                    "Risk assessment",
+                    "Multi-platform support"
+                ]
+            },
+            "enterprise_capabilities": [
+                "RSCD Agent deployment analysis",
+                "Compliance template analysis (HIPAA, SOX, PCI-DSS)",
+                "Patch management workflow assessment",
+                "NSH script and BlPackage analysis",
+                "Job flow and automation template evaluation",
+                "Multi-platform automation analysis"
+            ],
+            "automation_types": {
+                "COMPLIANCE": "Security compliance scanning and policy enforcement",
+                "PATCHING": "Patch management and security update automation", 
+                "DEPLOYMENT": "Application and software deployment automation",
+                "CONFIGURATION": "System configuration and infrastructure management",
+                "MONITORING": "Health monitoring and performance tracking"
+            },
+            "supported_platforms": ["Windows", "Linux", "AIX", "Solaris", "HPUX"],
+            "session_management": "Dedicated sessions per analysis with enterprise scalability",
+            "streaming_support": "Real-time progress updates with detailed analysis steps",
+            "modernization_guidance": "Expert recommendations for Ansible conversion and cloud migration"
+        },
+        "endpoints": {
+            "analyze": "/api/bladelogic/analyze",
+            "stream": "/api/bladelogic/analyze/stream (RECOMMENDED)",
+            "capabilities": "/api/bladelogic/capabilities",
+            "automation_types": "/api/bladelogic/automation-types",
+            "status": "/api/bladelogic/status",
+            "health": "/api/bladelogic/health",
+            "test_stream": "/api/bladelogic/test-stream"
+        },
+        "usage": {
+            "basic_analysis": {
+                "endpoint": "/api/bladelogic/analyze",
+                "method": "POST",
+                "payload": {
+                    "files": {
+                        "deploy_agent.sh": "#!/bin/bash\\necho 'Installing BladeLogic agent...'\\nyum install -y bladelogic-rscd"
+                    }
+                }
+            },
+            "streaming_analysis": {
+                "endpoint": "/api/bladelogic/analyze/stream",
+                "method": "POST",
+                "description": "Real-time analysis with progress updates"
+            }
+        }
+    }
+
 @app.get("/api/validate/features")
 async def get_validate_features():
     """Get information about Validation agent features"""
@@ -608,7 +708,7 @@ async def get_validate_features():
                 "endpoint": "/api/validate/playbook",
                 "method": "POST",
                 "payload": {
-                    "playbook_content": "---\n- name: Example\n  hosts: all\n  tasks: []",
+                    "playbook_content": "---\\n- name: Example\\n  hosts: all\\n  tasks: []",
                     "profile": "basic"
                 }
             }

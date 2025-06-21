@@ -1,0 +1,20 @@
+
+# HIPAA Linux Compliance Template Example (for BladeLogic Component Template creation)
+rules:
+  - id: "HIPAA-01"
+    description: "Ensure SSH root login is disabled"
+    command: "grep ^PermitRootLogin /etc/ssh/sshd_config"
+    expected: "PermitRootLogin no"
+  - id: "HIPAA-02"
+    description: "Ensure password expiration is set to 90 days"
+    command: "grep ^PASS_MAX_DAYS /etc/login.defs"
+    expected: "PASS_MAX_DAYS   90"
+  - id: "HIPAA-03"
+    description: "Ensure auditing is enabled"
+    command: "systemctl is-enabled auditd"
+    expected: "enabled"
+  - id: "HIPAA-04"
+    description: "Ensure unauthorized SUID/SGID files are not present"
+    command: "find / -perm /6000 -type f -exec ls -l {} \;"
+    expected: "Only authorized SUID/SGID files"
+# ...Add more HIPAA-aligned rules as needed.
