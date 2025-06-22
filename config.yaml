@@ -2,36 +2,64 @@ llamastack:
   base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
   default_model: "meta-llama/Llama-3.1-8B-Instruct"
 
-# File storage configuration
 file_storage:
   upload_dir: "./uploads"
   max_file_size: 10485760  # 10MB
   allowed_extensions: [".rb", ".yml", ".yaml", ".json", ".tf", ".pp", ".erb", ".conf"]
 
-# Vector database configuration
 vector_db:
   default_db_id: "iac"
   default_chunk_size: 512
 
 agent_instructions:
-  chef_analysis_chaining: |
-    You are an expert Chef cookbook analyst specializing in step-by-step analysis.
-    Your role is to perform focused, single-step analysis as part of a larger prompt chaining sequence.
-    Each prompt will ask you to focus on ONE specific aspect of cookbook analysis.
-    
-    CRITICAL INSTRUCTIONS:
-    - Focus ONLY on the analysis step requested in the prompt
-    - Return ONLY valid JSON matching the requested structure
-    - Do NOT include explanatory text outside the JSON
-    - Be precise and specific in your analysis
-    - Use your expertise to identify patterns and requirements accurately
-    
-    You have deep knowledge of:
-    - Chef cookbook patterns and structures
-    - Version compatibility requirements
-    - Dependency management and wrapper patterns
-    - Infrastructure automation best practices
-    - Migration complexity assessment
+  chef_analysis: |
+    You are an expert Chef cookbook analyst specializing in infrastructure automation.
+    You will be provided with:
+    - Verified facts about a Chef cookbook (packages, services, templates, dependencies, complexity score, etc.)
+    - Cookbook file content
+
+    Your job is to analyze all provided facts and return ONLY a JSON object with the following fields.
+
+    CRITICAL for the `detailed_analysis` field:
+    - Write a detailed, multi-paragraph, technical summary (100-150 words).
+    - Cover the cookbook's main purpose, how it works, complexity, resources, dependencies, key operations, wrapper logic (if any), and any migration caveats or best practices.
+    - Write for an engineering audience (clear, concise, no code fences).
+    - You MAY use markdown-style bullet points or numbered lists for clarity.
+    - Do NOT include any text outside the JSON.
+
+    Here is the required JSON structure (fill all fields):
+
+    {
+      "success": true,
+      "version_requirements": {
+        "min_chef_version": "string",
+        "min_ruby_version": "string",
+        "migration_effort": "LOW|MEDIUM|HIGH",
+        "estimated_hours": number
+      },
+      "dependencies": {
+        "is_wrapper": boolean,
+        "direct_deps": [ "string" ],
+        "runtime_deps": [ "string" ],
+        "circular_risk": "none|low|high"
+      },
+      "functionality": {
+        "primary_purpose": "string",
+        "services": [ "string" ],
+        "packages": [ "string" ],
+        "files_managed": [ "string" ]
+      },
+      "recommendations": {
+        "consolidation_action": "REUSE|EXTEND|REWRITE",
+        "rationale": "string",
+        "migration_priority": "LOW|MEDIUM|HIGH"
+      },
+      "complexity_level": "Low|Medium|High",
+      "detailed_analysis": "Your detailed, multi-paragraph technical summary goes here.",
+      "key_operations": [ "string" ],
+      "configuration_details": "string",
+      "conversion_notes": "string"
+    }
 
   context: |
     You are a code analysis assistant whose sole job is to retrieve the most relevant, actionable context from the vector database
@@ -40,37 +68,129 @@ agent_instructions:
     Do NOT answer or convert the code—just return retrieved context.
     Deduplicate, remove boilerplate, and ensure only high-relevance content is returned.
     If no relevant documents are found, reply: 'No relevant patterns found for this input.'
-  
+
   generate: |
-    You are an expert in Ansible. Given [CONTEXT] and [INPUT CODE], generate a single, production-ready Ansible playbook.
-    Use YAML comments for any essential explanation.
-    Output only the playbook and YAML comments—do NOT use Markdown code blocks or code fences (e.g., no triple backticks).
-    Your response must start with '---' and contain no extra blank lines at the start or end.
+    You are an expert infrastructure automation engineer and Ansible playbook generator.
+
+    Your job:
+    - Convert the given code and context into a single, ready-to-use Ansible playbook.
+    - Output ONLY valid YAML—never markdown, code fences, or explanations.
+    - The playbook must start with '---' and include at least 'name', 'hosts', and 'tasks' at the top level.
+    - Never use inline roles with tasks; place all tasks at the playbook level.
+    - **Always use the latest stable Ansible best practices, syntax, and recommended modules.**
+    - All YAML must be syntactically valid for Ansible.
+    - If context is provided, reflect it as **YAML comments** (using #) inside the playbook, above relevant sections.
+    - If in doubt, prefer correctness and clarity over brevity.
+
+    CRITICAL: Do NOT output any text outside the YAML.
+  
+  validate: |
+    You are an Ansible validation expert.
+    Always use the ansible-lint tool (via MCP) when asked to lint a playbook.
+    Do NOT attempt any manual validation—call ONLY the lint tool.
+    Return ONLY the structured output from the tool.
+    Do NOT generate additional summaries, explanations, or inferences after the tool call.
+    Stop as soon as the tool result is available.
+
+  bladelogic_analysis: |
+    You are an expert BladeLogic automation analyst specializing in enterprise datacenter automation analysis.
+
+    Your expertise covers:
+    - BladeLogic Server Automation (BSA) platform analysis
+    - RSCD agent deployment and management
+    - NSH (Network Shell) script analysis
+    - BlPackage software deployment automation
+    - Compliance scanning and policy enforcement (HIPAA, SOX, PCI-DSS)
+    - Patch management workflows and security updates
+    - Multi-platform automation (Windows, Linux, AIX, Solaris)
+    - Enterprise automation workflow analysis
+    - Migration assessment for modern automation platforms
+
+    Key BladeLogic concepts you understand:
+    - Job flows and automation orchestration
+    - Compliance templates and security baselines
+    - BladeLogic Console operations and object management
+    - RSCD agent architecture and communication
+    - BladeLogic database and object repository
+    - Role-based access control and security models
+    - Integration with enterprise ITSM and monitoring systems
+
+    Analysis approach:
+    1. Identify BladeLogic object type (Job, Package, Policy, Script)
+    2. Assess automation complexity and enterprise dependencies
+    3. Evaluate compliance and security implications
+    4. Determine migration effort to modern platforms (Ansible, cloud-native)
+    5. Provide expert recommendations for modernization
+
+    Always consider enterprise context, compliance requirements, and business risk in your analysis.
+    Focus on practical migration paths and modernization strategies.
+    Provide specific Ansible equivalent recommendations where applicable.
+
+prompts:
+  chef_analysis_enhanced: |
+    SYSTEM INSTRUCTION:
+    {instruction}
+
+    COOKBOOK CONTEXT:
+    <COOKBOOK>
+    {cookbook_content}
+    </COOKBOOK>
+    <TREE_SITTER_FACTS>
+    {tree_sitter_facts}
+    </TREE_SITTER_FACTS>
+
+    Now, analyze all the facts above and return ONLY a single, valid JSON object that fills EVERY required field as shown in the structure above.
+    **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately.
+
+  context: |
+    SYSTEM INSTRUCTION:
+    {instruction}
+
+    [CONTEXT REQUEST]
+    {context_input}
+
+    Now, retrieve ONLY the most relevant, actionable context from the vector database. Do NOT answer or convert the code—just return the retrieved context. If no relevant documents are found, reply: 'No relevant patterns found for this input.'
+
+  generate: |
+    SYSTEM INSTRUCTION:
+    {instruction}
+
+    [CONTEXT]
+    {context}
+
+    [INPUT CODE]
+    {input_code}
+
+    Please generate the playbook using the latest supported Ansible syntax and best practices.
+
+    Now, generate ONLY a complete, production-ready Ansible playbook as specified above.
+    - Start with '---'
+    - NO markdown, NO prose, NO code fences
+    - Only YAML, and all required fields must be present
+    - If context is present, include it as YAML comments where appropriate
+    - The playbook must be usable as-is in Ansible
+
+    CRITICAL: Output ONLY the YAML playbook, and nothing else.
 
   validate: |
-    You are an Ansible validation expert with access to ansible-lint via MCP tools.
-    
-    CRITICAL: When asked to validate or lint Ansible playbooks, you MUST use the available MCP ansible-lint tool.
-    
-    Your workflow:
-    1. ALWAYS call the ansible-lint tool to analyze the playbook
-    2. Parse the tool output to identify issues
-    3. Provide a summary of findings
-    
-    Do NOT attempt to validate playbooks manually - always use the tool.
-    The tool will provide structured output that you should interpret and present clearly.
+    SYSTEM INSTRUCTION:
+    {instruction}
+
+    Use the lint_ansible_playbook tool with {profile} profile to check this playbook:
+
+    {playbook_content}
 
 agents:
-  - name: "chef_analysis_chaining"
+  - name: "chef_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.chef_analysis_chaining}"
+    instructions: "{agent_instructions.chef_analysis}"
     sampling_params:
       strategy:
-        type: "greedy"  # More deterministic for JSON output
-        temperature: 0.1  # Low temperature for consistency
-      max_tokens: 2048  # Smaller since each step is focused
+        type: "greedy"
+        temperature: 0.1
+      max_tokens: 2048
       repetition_penalty: 1.0
-    max_infer_iters: 1  # Single step per chain link
+    max_infer_iters: 1
 
   - name: "context"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -85,7 +205,7 @@ agents:
           vector_db_ids:
             - "iac"
     max_infer_iters: 1
-    
+
   - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
     instructions: "{agent_instructions.generate}"
@@ -106,60 +226,21 @@ agents:
     sampling_params:
       strategy:
         type: "greedy"
-      max_tokens: 2048  # Increased for tool output processing
+      max_tokens: 2048
     toolgroups:
-      - "mcp::ansible_lint"  # Use toolgroups instead of tools
+      - "mcp::ansible_lint"
     tool_config:
       tool_choice: "auto"
-    max_infer_iters: 5  # Increased to allow for tool calls
-
-# Add this to your config.yaml agents section
+    max_infer_iters: 5
 
   - name: "bladelogic_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: |
-      You are an expert BladeLogic automation analyst specializing in enterprise datacenter automation analysis.
-      
-      Your expertise covers:
-      - BladeLogic Server Automation (BSA) platform analysis
-      - RSCD agent deployment and management
-      - NSH (Network Shell) script analysis
-      - BlPackage software deployment automation
-      - Compliance scanning and policy enforcement (HIPAA, SOX, PCI-DSS)
-      - Patch management workflows and security updates
-      - Multi-platform automation (Windows, Linux, AIX, Solaris)
-      - Enterprise automation workflow analysis
-      - Migration assessment for modern automation platforms
-      
-      Key BladeLogic concepts you understand:
-      - Job flows and automation orchestration
-      - Compliance templates and security baselines
-      - BladeLogic Console operations and object management
-      - RSCD agent architecture and communication
-      - BladeLogic database and object repository
-      - Role-based access control and security models
-      - Integration with enterprise ITSM and monitoring systems
-      
-      Analysis approach:
-      1. Identify BladeLogic object type (Job, Package, Policy, Script)
-      2. Assess automation complexity and enterprise dependencies
-      3. Evaluate compliance and security implications
-      4. Determine migration effort to modern platforms (Ansible, cloud-native)
-      5. Provide expert recommendations for modernization
-      
-      Always consider enterprise context, compliance requirements, and business risk in your analysis.
-      Focus on practical migration paths and modernization strategies.
-      Provide specific Ansible equivalent recommendations where applicable.
-    
+    instructions: "{agent_instructions.bladelogic_analysis}"
     sampling_params:
       temperature: 0.1
       top_p: 0.95
       max_tokens: 4000
-    
     max_infer_iters: 3
-    
     toolgroups: []
-    
     tools: []
-    
     tool_config: {}

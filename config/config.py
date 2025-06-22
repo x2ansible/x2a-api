@@ -7,6 +7,7 @@ class ConfigLoader:
     Loads and interpolates config.yaml for LlamaStack-based agentic apps.
     - Expands {agent_instructions.XYZ} references inside agents -> instructions.
     - Provides access to base_url, default_model, agents list, and agent_instructions.
+    - Also provides access to prompt templates in the 'prompts' section.
     - Raises clear errors on misconfigurations.
     """
 
@@ -81,3 +82,9 @@ class ConfigLoader:
             if agent.get("name") == agent_name:
                 return agent
         return None
+
+    def get_prompt_template(self, prompt_name: str) -> Optional[str]:
+        """
+        Returns the string template for a given prompt name (from 'prompts' section).
+        """
+        return self.config.get("prompts", {}).get(prompt_name)

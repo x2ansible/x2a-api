@@ -1,8 +1,3 @@
-"""
-Enhanced ChefAnalysisAgent with Tree-sitter Integration
-Logs all files received before analysis for full observability.
-"""
-
 import time
 import uuid
 import json
@@ -16,28 +11,31 @@ from agents.chef_analysis.utils import create_correlation_id
 from agents.chef_analysis.processor import extract_and_validate_analysis
 from shared.exceptions import CookbookAnalysisError
 from shared.log_utils import create_chef_logger, ChefAnalysisLogger
-
 from shared.tree_sitter_analyzer import TreeSitterAnalyzer
 
 logger = logging.getLogger(__name__)
 
 class ChefAnalysisAgent:
     """
-    Enhanced ChefAnalysisAgent with Tree-sitter integration and input logging.
+    ChefAnalysisAgent: all instructions/prompt templates are from config (no hardcoding).
     """
 
     def __init__(
-        self, 
-        client: LlamaStackClient, 
-        agent_id: str, 
-        session_id: str, 
-        timeout: int = 120
+        self,
+        client: LlamaStackClient,
+        agent_id: str,
+        session_id: str,
+        instruction: str,
+        enhanced_prompt_template: str,
+        timeout: int = 120,
     ):
         self.client = client
         self.agent_id = agent_id
         self.session_id = session_id
         self.timeout = timeout
         self.logger = create_chef_logger("init")
+        self.instruction = instruction
+        self.enhanced_prompt_template = enhanced_prompt_template
 
         try:
             self.tree_sitter = TreeSitterAnalyzer()
@@ -228,13 +226,9 @@ class ChefAnalysisAgent:
         session_id: str
     ) -> Dict[str, Any]:
         try:
-            step_logger.info(f"[{correlation_id}] 🧠 Creating enhanced prompt with verified facts")
-            if tree_sitter_facts.get('tree_sitter_enabled', False):
-                enhanced_prompt = self._create_enhanced_analysis_prompt(cookbook_content, tree_sitter_facts)
-                step_logger.info(f"[{correlation_id}] 📝 Using Tree-sitter enhanced prompt")
-            else:
-                enhanced_prompt = self._create_analysis_prompt(cookbook_content)
-                step_logger.info(f"[{correlation_id}] 📝 Using standard prompt (Tree-sitter unavailable)")
+            step_logger.info(f"[{correlation_id}] 🧠 Creating enhanced prompt from config")
+            enhanced_prompt = self._create_enhanced_analysis_prompt(cookbook_content, tree_sitter_facts)
+            step_logger.info(f"[{correlation_id}] 📝 Using enhanced prompt (from YAML config)")
             result = await self._analyze_direct(enhanced_prompt, correlation_id, step_logger, session_id)
             if result and result.get("success") and not result.get("postprocess_error"):
                 step_logger.info(f"[{correlation_id}]  LlamaStack agent analysis succeeded")
@@ -247,58 +241,46 @@ class ChefAnalysisAgent:
         return self._create_intelligent_fallback_from_facts(tree_sitter_facts, correlation_id, cookbook_content)
 
     def _create_enhanced_analysis_prompt(self, cookbook_content: str, tree_sitter_facts: Dict[str, Any]) -> str:
-        resources = tree_sitter_facts['resources']
-        deps = tree_sitter_facts['dependencies']
-        metadata = tree_sitter_facts['metadata']
-        summary = tree_sitter_facts['summary']
-        return f"""You are analyzing a Chef cookbook.
+        facts_str = json.dumps(tree_sitter_facts, indent=2)
+        return self.enhanced_prompt_template.format(
+            instruction=self.instruction,
+            cookbook_content=cookbook_content,
+            tree_sitter_facts=facts_str
+        )
 
-Verified facts (from Tree-sitter):
-- Cookbook: {metadata.get('name', 'unknown')} v{metadata.get('version', 'unknown')}
-- Packages: {resources['packages']}
-- Services: {resources['services']}
-- Files: {resources['files']}
-- Templates: {resources['templates']}
-- Direct Deps: {deps['cookbook_deps']}
-- Wrapper Cookbooks: {deps['include_recipes']}
-- Complexity Score: {summary['complexity_score']}
-- Total Resources: {summary['total_resources']}
-
-Now, return only this JSON structure filled in with accurate values based on the above:
-
-{{
-"success": true,
-"version_requirements": {{
-    "min_chef_version": "string",
-    "min_ruby_version": "string",
-    "migration_effort": "LOW|MEDIUM|HIGH",
-    "estimated_hours": number
-}},
-"dependencies": {{
-    "is_wrapper": boolean,
-    "direct_deps": {json.dumps(deps['cookbook_deps'])},
-    "runtime_deps": [],
-    "circular_risk": "none|low|high"
-}},
-"functionality": {{
-    "primary_purpose": "string",
-    "services": {json.dumps(resources['services'])},
-    "packages": {json.dumps(resources['packages'])},
-    "files_managed": {json.dumps(resources['files'])}
-}},
-"recommendations": {{
-    "consolidation_action": "REUSE|EXTEND|REWRITE",
-    "rationale": "string",
-    "migration_priority": "LOW|MEDIUM|HIGH"
-}},
-"complexity_level": "Low|Medium|High",
-"detailed_analysis": "string",
-"key_operations": ["string"],
-"configuration_details": "string",
-"conversion_notes": "string"
-}}
-
-DO NOT return Markdown, explanations, or prose. Respond ONLY with this JSON object."""
+    async def _analyze_direct(
+        self, 
+        prompt: str, 
+        correlation_id: str, 
+        step_logger: ChefAnalysisLogger, 
+        session_id: str
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            messages = [UserMessage(role="user", content=prompt)]
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=session_id,
+                messages=messages,
+                stream=True,
+            )
+            turn = None
+            for chunk in generator:
+                event = chunk.event
+                event_type = event.payload.event_type
+                if event_type == "turn_complete":
+                    turn = event.payload.turn
+                    break
+            if not turn:
+                step_logger.error("No turn completed in LlamaStack response")
+                return None
+            raw_response = turn.output_message.content
+            step_logger.info(f"📥 Received LlamaStack response: {len(raw_response)} chars")
+            result = extract_and_validate_analysis(raw_response, correlation_id, prompt[:500])
+            step_logger.info(f"🔍 Processor result: success={result.get('success')}")
+            return result
+        except Exception as e:
+            step_logger.error(f" LlamaStack analysis failed: {e}")
+            return None
 
     def _merge_analysis_results(
         self,
@@ -468,121 +450,6 @@ DO NOT return Markdown, explanations, or prose. Respond ONLY with this JSON obje
         logger.warning("⚠️ LLM analysis failed - processor will handle intelligent fallback")
         return extract_and_validate_analysis("{}", correlation_id, cookbook_content)
 
-    async def _analyze_direct(
-        self, 
-        prompt: str, 
-        correlation_id: str, 
-        step_logger: ChefAnalysisLogger, 
-        session_id: str
-    ) -> Optional[Dict[str, Any]]:
-        try:
-            messages = [UserMessage(role="user", content=prompt)]
-            generator = self.client.agents.turn.create(
-                agent_id=self.agent_id,
-                session_id=session_id,
-                messages=messages,
-                stream=True,
-            )
-            turn = None
-            for chunk in generator:
-                event = chunk.event
-                event_type = event.payload.event_type
-                if event_type == "turn_complete":
-                    turn = event.payload.turn
-                    break
-            if not turn:
-                step_logger.error("No turn completed in LlamaStack response")
-                return None
-            raw_response = turn.output_message.content
-            step_logger.info(f"📥 Received LlamaStack response: {len(raw_response)} chars")
-            result = extract_and_validate_analysis(raw_response, correlation_id, prompt[:500])
-            step_logger.info(f"🔍 Processor result: success={result.get('success')}")
-            return result
-        except Exception as e:
-            step_logger.error(f" LlamaStack analysis failed: {e}")
-            return None
-
-    def _create_analysis_prompt(self, cookbook_content: str) -> str:
-        return f"""Analyze this Chef cookbook and provide a comprehensive analysis. Return ONLY valid JSON with your analysis.
-
-<COOKBOOK>
-{cookbook_content}
-</COOKBOOK>
-
-Please analyze the cookbook and provide the following information in JSON format:
-
-1. VERSION REQUIREMENTS:
-   - Minimum Chef version required (if determinable)
-   - Minimum Ruby version required (if determinable)
-   - Migration effort estimate (LOW/MEDIUM/HIGH)
-   - Estimated migration hours
-   - Any deprecated features found
-
-2. DEPENDENCIES:
-   - Whether this is a wrapper cookbook
-   - List of wrapped cookbooks (from include_recipe calls)
-   - Direct dependencies (from metadata.rb)
-   - Runtime dependencies
-   - Circular dependency risk assessment
-
-3. FUNCTIONALITY:
-   - Primary purpose of the cookbook
-   - Services managed
-   - Packages installed
-   - Key files/directories managed
-   - Reusability level (LOW/MEDIUM/HIGH)
-   - Customization points
-
-4. RECOMMENDATIONS:
-   - Consolidation action (REUSE/EXTEND/RECREATE)
-   - Detailed rationale
-   - Migration priority (LOW/MEDIUM/HIGH/CRITICAL)
-   - Risk factors to consider
-   - Recommended migration steps
-
-Return the analysis in this JSON structure:
-{{
-    "success": true,
-    "version_requirements": {{
-        "min_chef_version": "version or null",
-        "min_ruby_version": "version or null", 
-        "migration_effort": "LOW|MEDIUM|HIGH",
-        "estimated_hours": number_or_null,
-        "deprecated_features": ["list of deprecated features"]
-    }},
-    "dependencies": {{
-        "is_wrapper": true_or_false,
-        "wrapped_cookbooks": ["list of cookbooks"],
-        "direct_deps": ["dependencies from metadata"],
-        "runtime_deps": ["runtime dependencies"],
-        "circular_risk": "none|low|medium|high"
-    }},
-    "functionality": {{
-        "primary_purpose": "description",
-        "services": ["list of services"],
-        "packages": ["list of packages"],
-        "files_managed": ["key files/directories"],
-        "reusability": "LOW|MEDIUM|HIGH",
-        "customization_points": ["customization areas"]
-    }},
-    "recommendations": {{
-        "consolidation_action": "REUSE|EXTEND|RECREATE",
-        "rationale": "detailed explanation",
-        "migration_priority": "LOW|MEDIUM|HIGH|CRITICAL",
-        "risk_factors": ["list of risks"],
-        "migration_steps": ["recommended steps"]
-    }}
-}}
-
-CRITICAL: Return ONLY the JSON object with your actual analysis values."""
-
-    def _format_cookbook_content(self, cookbook_name: str, files: Dict[str, str]) -> str:
-        content_parts = [f"Cookbook Name: {cookbook_name}"]
-        for filename, content in files.items():
-            content_parts.append(f"\n=== File: {filename} ===")
-            content_parts.append(content.strip())
-        return "\n".join(content_parts)
-
     async def analyze_cookbook_stream(
         self,
         cookbook_data: Dict[str, Any],
@@ -625,6 +492,30 @@ CRITICAL: Return ONLY the JSON object with your actual analysis values."""
                 "correlation_id": correlation_id
             }
 
+    def _format_cookbook_content(self, cookbook_name: str, files: Dict[str, str]) -> str:
+        content_parts = [f"Cookbook Name: {cookbook_name}"]
+        for filename, content in files.items():
+            content_parts.append(f"\n=== File: {filename} ===")
+            content_parts.append(content.strip())
+        return "\n".join(content_parts)
+
+    async def health_check(self) -> bool:
+        try:
+            messages = [UserMessage(role="user", content="Health check - please respond with 'OK'")]
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=self.session_id,
+                messages=messages,  
+                stream=True,
+            )
+            for chunk in generator:
+                break
+            self.logger.info(" Health check passed")
+            return True
+        except Exception as e:
+            self.logger.error(f" Health check failed: {e}")
+            return False
+
     def get_status(self) -> Dict[str, Any]:
         tree_sitter_status = {}
         if self.tree_sitter:
@@ -647,23 +538,6 @@ CRITICAL: Return ONLY the JSON object with your actual analysis values."""
                 "streaming_analysis"
             ]
         }
-
-    async def health_check(self) -> bool:
-        try:
-            messages = [UserMessage(role="user", content="Health check - please respond with 'OK'")]
-            generator = self.client.agents.turn.create(
-                agent_id=self.agent_id,
-                session_id=self.session_id,
-                messages=messages,  
-                stream=True,
-            )
-            for chunk in generator:
-                break
-            self.logger.info(" Health check passed")
-            return True
-        except Exception as e:
-            self.logger.error(f" Health check failed: {e}")
-            return False
 
     def get_tree_sitter_status(self) -> Dict[str, Any]:
         if not self.tree_sitter:
