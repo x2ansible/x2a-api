@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from routes.admin import router as admin_router
 from routes.chef import router as chef_router
 from routes.bladelogic import router as bladelogic_router
+from routes.shell import router as shell_router
+from routes.salt import router as salt_router
 from routes.context import router as context_router
 from routes.files import router as files_router
 from routes.generate import router as generate_router
@@ -68,6 +70,14 @@ class AgentRegistry:
 
     async def get_or_create_agent(self, agent_config_dict: dict) -> str:
         agent_name = agent_config_dict["name"]
+        logger.info(f"🔍 Processing agent creation request for: {agent_name}")
+        
+        # === DEBUG: Log the full config being processed ===
+        logger.info(f"🔧 Agent config keys: {list(agent_config_dict.keys())}")
+        logger.info(f"🔧 Tools in config: {agent_config_dict.get('tools', [])}")
+        logger.info(f"🔧 Toolgroups in config: {agent_config_dict.get('toolgroups', [])}")
+        logger.info(f"🔧 Tool config: {agent_config_dict.get('tool_config', {})}")
+        
         if not agent_name or agent_name.lower() in ['none', 'null', '']:
             raise ValueError(f"Agent name cannot be None/empty: {agent_name}")
         if agent_name in self.agents:
@@ -79,18 +89,34 @@ class AgentRegistry:
             self.agent_configs[agent_name] = agent_config_dict
             logger.info(f"📝 Registered existing LlamaStack agent: {agent_name}")
             return existing_agent_id
+        
         logger.info(f"🆕 Creating new agent: {agent_name}")
+        
+        # === DEBUG: Log what we're about to pass to AgentConfig ===
+        tools_to_pass = agent_config_dict.get("tools", [])
+        toolgroups_to_pass = agent_config_dict.get("toolgroups", [])
+        tool_config_to_pass = agent_config_dict.get("tool_config", {})
+        
+        logger.info(f"🔧 Passing to AgentConfig - Tools: {tools_to_pass}")
+        logger.info(f"🔧 Passing to AgentConfig - Toolgroups: {toolgroups_to_pass}")
+        logger.info(f"🔧 Passing to AgentConfig - Tool config: {tool_config_to_pass}")
+        
         agent_config = AgentConfig(
             name=agent_name,
             model=agent_config_dict["model"],
             instructions=agent_config_dict["instructions"],
             sampling_params=agent_config_dict.get("sampling_params"),
             max_infer_iters=agent_config_dict.get("max_infer_iters"),
-            toolgroups=agent_config_dict.get("toolgroups", []),
-            tools=agent_config_dict.get("tools", []),
-            tool_config=agent_config_dict.get("tool_config"),
+            toolgroups=toolgroups_to_pass,
+            tools=tools_to_pass,
+            tool_config=tool_config_to_pass,
             enable_session_persistence=True,
         )
+        
+        # === DEBUG: Log the AgentConfig object ===
+        logger.info(f"🔧 AgentConfig created with tools: {getattr(agent_config, 'tools', 'NOT_SET')}")
+        logger.info(f"🔧 AgentConfig created with toolgroups: {getattr(agent_config, 'toolgroups', 'NOT_SET')}")
+        
         try:
             response = self.client.agents.create(agent_config=agent_config)
             agent_id = response.agent_id
@@ -98,6 +124,22 @@ class AgentRegistry:
             self.agents[agent_name] = agent_id
             self.agent_configs[agent_name] = agent_config_dict
             logger.info(f" Created and registered new agent: {agent_name} with ID: {agent_id}")
+            
+            # === DEBUG: Verify the created agent has tools ===
+            try:
+                import httpx
+                verify_response = httpx.get(f"{self.client.base_url}/v1/agents/{agent_id}", timeout=10)
+                if verify_response.status_code == 200:
+                    agent_data = verify_response.json()
+                    actual_tools = agent_data.get("agent_config", {}).get("client_tools", [])
+                    actual_toolgroups = agent_data.get("agent_config", {}).get("toolgroups", [])
+                    logger.info(f" Verified agent {agent_name} - Tools: {actual_tools}")
+                    logger.info(f" Verified agent {agent_name} - Toolgroups: {actual_toolgroups}")
+                else:
+                    logger.warning(f"⚠️ Could not verify agent {agent_name} - HTTP {verify_response.status_code}")
+            except Exception as ve:
+                logger.warning(f"⚠️ Could not verify agent {agent_name}: {ve}")
+            
             return agent_id
         except Exception as e:
             logger.error(f" Failed to create agent {agent_name}: {e}")
@@ -167,6 +209,32 @@ class AgentRegistry:
             "sessions": dict(self.sessions)
         }
 
+def extract_vector_db_id(agent_config: dict, default: str = "iac") -> str:
+    """
+    Extract vector DB ID from agent config, supporting both tools and toolgroups.
+    Falls back to default if not found.
+    """
+    # Try tools first (legacy format)
+    tools = agent_config.get("tools", [])
+    for tool in tools:
+        if isinstance(tool, dict):
+            tool_name = tool.get("name", "")
+            if "rag" in tool_name:
+                args = tool.get("args", {})
+                vector_db_ids = args.get("vector_db_ids", [])
+                if vector_db_ids:
+                    return vector_db_ids[0]
+    
+    # For toolgroups (new format), use default since toolgroups handle config internally
+    toolgroups = agent_config.get("toolgroups", [])
+    for toolgroup in toolgroups:
+        if "rag" in toolgroup:
+            # Toolgroups don't expose vector_db_ids in config, use default
+            return default
+    
+    # Fallback to default
+    return default
+
 agent_registry = None
 
 @asynccontextmanager
@@ -181,13 +249,46 @@ async def lifespan(app: FastAPI):
     app.state.config_loader = config_loader
 
     logger.info(f"🔗 Connected to LlamaStack: {llamastack_base_url}")
-    logger.info("🤖 Registering all agents...")
+    
+    # === DEBUG SECTION - Add this to see what's happening ===
+    logger.info("🤖 Loading agent configurations...")
+    agents_config = config_loader.get_agents_config()
+    logger.info(f"📊 Total agents found in config.yaml: {len(agents_config)}")
+    
+    for i, agent_config in enumerate(agents_config):
+        agent_name = agent_config.get("name", "UNNAMED")
+        logger.info(f"📝 Agent {i+1}/{len(agents_config)}: {agent_name}")
+    
+    logger.info("🤖 Starting agent registration...")
+
+    # Verify LlamaStack before registration
+    logger.info("🔍 Checking existing agents in LlamaStack...")
+    try:
+        if hasattr(client.agents, "list"):
+            response = client.agents.list()
+            agents_data = response.data if hasattr(response, 'data') else response
+        else:
+            import httpx
+            response = httpx.get(f"{client.base_url}/v1/agents", timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            agents_data = data.get("data", [])
+        
+        logger.info(f"🌐 Existing agents in LlamaStack: {len(agents_data)}")
+        for agent in agents_data:
+            agent_config = agent.get("agent_config", {})
+            agent_name = agent_config.get("name", "UNNAMED")
+            agent_id = agent.get("agent_id", "NO_ID")
+            logger.info(f"   🔸 Existing: {agent_name} (ID: {agent_id[:8]}...)")
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Could not check existing LlamaStack agents: {e}")
 
     registered_agents = {}
 
-    for agent_config in agents_config:
+    for i, agent_config in enumerate(agents_config):
         agent_name = agent_config["name"]
-        logger.info(f"🔧 Setting up {agent_name} agent...")
+        logger.info(f"🔧 Setting up agent {i+1}/{len(agents_config)}: {agent_name}...")
         try:
             agent_id = await agent_registry.get_or_create_agent(agent_config)
             session_id = agent_registry.create_session(agent_name)
@@ -196,10 +297,40 @@ async def lifespan(app: FastAPI):
                 "session_id": session_id,
                 "config": agent_config
             }
-            logger.info(f" {agent_name} agent ready: agent_id={agent_id}")
+            logger.info(f" Agent {i+1}/{len(agents_config)} ready: {agent_name} (ID: {agent_id})")
         except Exception as e:
-            logger.error(f" Failed to setup {agent_name} agent: {e}")
+            logger.error(f" Failed to setup agent {i+1}/{len(agents_config)}: {agent_name} - {e}")
             raise
+
+    # === FINAL VERIFICATION ===
+    logger.info(f"📋 Registration Summary:")
+    logger.info(f"   Agents in config: {len(agents_config)}")
+    logger.info(f"   Agents registered: {len(registered_agents)}")
+    logger.info(f"   Registered agent names: {list(registered_agents.keys())}")
+    
+    # Check LlamaStack again after registration
+    logger.info("🔍 Final verification - agents in LlamaStack...")
+    try:
+        if hasattr(client.agents, "list"):
+            response = client.agents.list()
+            agents_data = response.data if hasattr(response, 'data') else response
+        else:
+            import httpx
+            response = httpx.get(f"{client.base_url}/v1/agents", timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            agents_data = data.get("data", [])
+        
+        logger.info(f"🌐 Total agents in LlamaStack after registration: {len(agents_data)}")
+        for agent in agents_data:
+            agent_config = agent.get("agent_config", {})
+            agent_name = agent_config.get("name", "UNNAMED")
+            agent_id = agent.get("agent_id", "NO_ID")
+            created_by = "US" if agent_name in registered_agents else "OTHER"
+            logger.info(f"   🔸 {created_by}: {agent_name} (ID: {agent_id[:8]}...)")
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Could not verify final LlamaStack agents: {e}")
 
     app.state.registered_agents = registered_agents
     agent_manager = AgentManager(llamastack_base_url)
@@ -246,16 +377,49 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ bladelogic_analysis agent not found in config!")
 
-    # === Setup ContextAgent ===
+    # === Setup ShellAnalysisAgent ===
+    if "shell_analysis" in registered_agents:
+        from agents.shell_analysis.agent import ShellAnalysisAgent
+        shell_info = registered_agents["shell_analysis"]
+        shell_agent = ShellAnalysisAgent(
+            client=client,
+            agent_id=shell_info["agent_id"],
+            session_id=shell_info["session_id"],
+            config_loader=config_loader
+        )
+        app.state.shell_analysis_agent = shell_agent
+        logger.info(f"🐚 ShellAnalysisAgent ready: agent_id={shell_info['agent_id']}")
+    else:
+        logger.warning("⚠️ shell_analysis agent not found in config!")
+
+    # === Setup SaltAnalysisAgent ===
+    if "salt_analysis" in registered_agents:
+        from agents.salt_analysis.agent import SaltAnalysisAgent
+        salt_info = registered_agents["salt_analysis"]
+        salt_agent = SaltAnalysisAgent(
+            client=client,
+            agent_id=salt_info["agent_id"],
+            session_id=salt_info["session_id"],
+            config_loader=config_loader
+        )
+        app.state.salt_analysis_agent = salt_agent
+        logger.info(f"🧂 SaltAnalysisAgent ready: agent_id={salt_info['agent_id']}")
+    else:
+        logger.warning("⚠️ salt_analysis agent not found in config!")
+
+    # === Setup ContextAgent - FIXED FOR TOOLGROUPS ===
     if "context" in registered_agents:
         context_info = registered_agents["context"]
         context_config = context_info["config"]
-        vector_db_id = "iac"
-        for tool in context_config.get("tools", []):
-            if tool["name"] == "builtin::rag":
-                vector_db_ids = tool["args"]["vector_db_ids"]
-                vector_db_id = vector_db_ids[0] if vector_db_ids else "iac"
-                break
+        
+        # Extract vector DB ID with support for both tools and toolgroups
+        vector_db_id = extract_vector_db_id(context_config, default="iac")
+        
+        logger.info(f"🔍 Context agent using vector DB: {vector_db_id}")
+        logger.info(f"🔍 Context agent toolgroups: {context_config.get('toolgroups', [])}")
+        logger.info(f"🔍 Context agent tools: {context_config.get('tools', [])}")
+        
+        # Use the registered agent with extracted vector DB ID
         app.state.context_agent = ContextAgent(
             client=client,
             agent_id=context_info["agent_id"],
@@ -278,7 +442,7 @@ async def lifespan(app: FastAPI):
             client=client,
             agent_id=codegen_info["agent_id"],
             session_id=codegen_info["session_id"],
-            config_loader=config_loader   # Pass config_loader for YAML-driven prompts/instructions!
+            config_loader=config_loader
         )
         logger.info(f"🔧 CodeGeneratorAgent ready: agent_id={codegen_info['agent_id']}")
     else:
@@ -290,7 +454,6 @@ async def lifespan(app: FastAPI):
         validation_prompt = config_loader.config.get("prompts", {}).get("validate")
         validation_instructions = config_loader.config.get("agent_instructions", {}).get("validate")
         
-        # Enhanced validation of config requirements
         if not validation_prompt:
             logger.error(" ValidationAgent missing 'prompts.validate' in config.yaml!")
             raise RuntimeError("ValidationAgent requires 'prompts.validate' template in config.yaml!")
@@ -299,16 +462,13 @@ async def lifespan(app: FastAPI):
             logger.error(" ValidationAgent missing 'agent_instructions.validate' in config.yaml!")
             raise RuntimeError("ValidationAgent requires 'agent_instructions.validate' in config.yaml!")
         
-        # Verify that the agent has the required toolgroups for ansible-lint
         agent_config = validation_info.get("config", {})
         toolgroups = agent_config.get("toolgroups", [])
         if "mcp::ansible_lint" not in toolgroups:
             logger.warning("⚠️ ValidationAgent missing 'mcp::ansible_lint' toolgroup - tool calling may not work!")
         
-        # Log the toolgroups for debugging
         logger.info(f"🔧 ValidationAgent toolgroups: {toolgroups}")
         
-        # Enhanced ValidationAgent initialization with better error handling
         try:
             app.state.validation_agent = ValidationAgent(
                 client=client,
@@ -316,25 +476,10 @@ async def lifespan(app: FastAPI):
                 session_id=validation_info["session_id"],
                 prompt_template=validation_prompt,
                 instruction=validation_instructions,
-                verbose_logging=True,  # Enable verbose logging for debugging
-                timeout=120  # Extended timeout for tool operations
+                verbose_logging=True,
+                timeout=120
             )
             logger.info(f"🔍 ValidationAgent ready: agent_id={validation_info['agent_id']}")
-            logger.info(f"🔍 ValidationAgent toolgroups: {toolgroups}")
-            logger.info(f"🔍 ValidationAgent tool_config: {agent_config.get('tool_config', {})}")
-            
-            # Log prompt template info for debugging
-            template_params = []
-            if "{instruction}" in validation_prompt:
-                template_params.append("instruction")
-            if "{playbook_content}" in validation_prompt:
-                template_params.append("playbook_content")
-            if "{playbook}" in validation_prompt:
-                template_params.append("playbook")
-            if "{profile}" in validation_prompt:
-                template_params.append("profile")
-            
-            logger.info(f"🔍 ValidationAgent prompt template parameters: {template_params}")
             
         except Exception as e:
             logger.error(f" Failed to initialize ValidationAgent: {e}")
@@ -396,6 +541,8 @@ app.add_middleware(
 app.include_router(admin_router, prefix="/api")
 app.include_router(chef_router, prefix="/api")
 app.include_router(bladelogic_router, prefix="/api")
+app.include_router(shell_router, prefix="/api")
+app.include_router(salt_router, prefix="/api")
 app.include_router(context_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
 app.include_router(generate_router, prefix="/api")
@@ -415,11 +562,38 @@ async def root():
         except Exception as e:
             validation_status = {"error": str(e)}
     
+    # Add shell agent status for debugging
+    shell_status = {}
+    if hasattr(app.state, 'shell_analysis_agent'):
+        try:
+            shell_status = app.state.shell_analysis_agent.get_status()
+        except Exception as e:
+            shell_status = {"error": str(e)}
+    
+    # Add salt agent status for debugging
+    salt_status = {}
+    if hasattr(app.state, 'salt_analysis_agent'):
+        try:
+            salt_status = app.state.salt_analysis_agent.get_status()
+        except Exception as e:
+            salt_status = {"error": str(e)}
+    
+    # Add context agent status for debugging
+    context_status = {}
+    if hasattr(app.state, 'context_agent'):
+        try:
+            context_status = app.state.context_agent.get_status()
+        except Exception as e:
+            context_status = {"error": str(e)}
+    
     return {
         "status": "ok",
         "message": " Welcome to X2A multi-agent API",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Registry-based (All agents including BladeLogic)",
+        "agent_pattern": "Registry-based (All agents including Salt and Shell)",
         "validation_agent_status": validation_status,
+        "shell_agent_status": shell_status,
+        "salt_agent_status": salt_status,
+        "context_agent_status": context_status,
     }

@@ -5,7 +5,7 @@ llamastack:
 file_storage:
   upload_dir: "./uploads"
   max_file_size: 10485760  # 10MB
-  allowed_extensions: [".rb", ".yml", ".yaml", ".json", ".tf", ".pp", ".erb", ".conf"]
+  allowed_extensions: [".rb", ".yml", ".yaml", ".json", ".tf", ".pp", ".erb", ".conf", ".sls", ".py"]
 
 vector_db:
   default_db_id: "iac"
@@ -61,29 +61,77 @@ agent_instructions:
       "conversion_notes": "string"
     }
 
+  salt_analysis: |
+    You are an expert Salt Stack infrastructure analyst specializing in configuration management and orchestration automation.
+    
+    You will analyze Salt infrastructure code and provide comprehensive technical assessment.
+    
+    Your expertise covers:
+    - Salt States (SLS files) and state module usage
+    - Salt Pillar data management and hierarchical configuration
+    - Salt Formulas and reusable configuration patterns
+    - Salt Orchestration for multi-minion workflows
+    - Salt Reactor for event-driven automation
+    - Salt Grains for system discovery and targeting
+    - Salt Mine for data sharing between minions
+    - Custom Salt modules and execution patterns
+    - Migration assessment to modern automation platforms
+
+    Key Salt concepts you understand:
+    - State tree organization and file_roots configuration
+    - Pillar data inheritance and merging strategies
+    - Jinja templating in Salt states and pillars
+    - Salt targeting and compound matchers
+    - Salt orchestration vs. state execution
+    - Salt event system and reactor patterns
+    - Salt GitFS and external pillar sources
+    - Salt proxy minions for network device management
+
+    Analysis approach:
+    1. Identify Salt object type (State, Pillar, Formula, Orchestration, Reactor)
+    2. Assess configuration complexity and dependencies
+    3. Evaluate state module usage and best practices
+    4. Determine reusability and maintainability factors
+    5. Provide expert recommendations for modernization
+
+    Always consider infrastructure context, scalability implications, and business impact.
+    Focus on practical migration paths and modernization strategies.
+    Provide specific Ansible equivalent recommendations where applicable.
+
+    Return ONLY valid JSON with comprehensive analysis following the structure expected by the system.
+
   context: |
-    You are a code analysis assistant whose sole job is to retrieve the most relevant, actionable context from the vector database
-    using the RAG knowledge_search tool for the given code or user question.
-    ALWAYS invoke the knowledge_search tool to look up matching patterns, best practices, or documentation for this input.
-    Do NOT answer or convert the code—just return retrieved context.
-    Deduplicate, remove boilerplate, and ensure only high-relevance content is returned.
-    If no relevant documents are found, reply: 'No relevant patterns found for this input.'
+    You are a RAG retrieval assistant specializing in Infrastructure as Code patterns.
+
+    MANDATORY WORKFLOW - FOLLOW EXACTLY:
+    1. IMMEDIATELY call the knowledge_search tool with the user's exact input as the query parameter.
+    2. WAIT for the complete tool response with retrieved content.
+    3. If the tool returns relevant content, format and return it clearly.
+    4. If no relevant content is found, respond: "No relevant patterns found for this input."
+
+    CRITICAL RULES:
+    - NEVER respond without first calling the knowledge_search tool
+    - NEVER generate answers from your own knowledge
+    - ALWAYS use the user's input as the search query
+    - The knowledge_search tool will access the Infrastructure as Code vector database
+    - Return retrieved content in a clear, organized format
 
   generate: |
-    You are an expert infrastructure automation engineer and Ansible playbook generator.
+    You are an expert Ansible automation engineer.
+    Generate ONLY valid, modern Ansible Core 2.15+ YAML playbooks from user input and context.
 
-    Your job:
-    - Convert the given code and context into a single, ready-to-use Ansible playbook.
-    - Output ONLY valid YAML—never markdown, code fences, or explanations.
-    - The playbook must start with '---' and include at least 'name', 'hosts', and 'tasks' at the top level.
-    - Never use inline roles with tasks; place all tasks at the playbook level.
-    - **Always use the latest stable Ansible best practices, syntax, and recommended modules.**
-    - All YAML must be syntactically valid for Ansible.
-    - If context is provided, reflect it as **YAML comments** (using #) inside the playbook, above relevant sections.
-    - If in doubt, prefer correctness and clarity over brevity.
+    Requirements:
+    - Output valid YAML only (no markdown, no comments, no explanations).
+    - Use fully-qualified collection names (FQCN) for all modules.
+    - Begin playbooks with '---' and use a single 'tasks:' and 'handlers:' block per play.
+    - Place 'collections:' at play level (do not repeat).
+    - Use 'become: true' for privilege escalation.
+    - Use 'when: ansible_facts[...]' for all conditionals.
+    - Use 'vars:' and 'vars_files:' as appropriate.
+    - Use 'notify:' in tasks and define all handlers under 'handlers:'.
+    - For sensitive tasks, use 'no_log: true'; for file edits, use 'backup: true' and 'mode:'.
+    - Only output YAML—never markdown, never explanations.
 
-    CRITICAL: Do NOT output any text outside the YAML.
-  
   validate: |
     You are an Ansible validation expert.
     Always use the ansible-lint tool (via MCP) when asked to lint a playbook.
@@ -126,6 +174,40 @@ agent_instructions:
     Focus on practical migration paths and modernization strategies.
     Provide specific Ansible equivalent recommendations where applicable.
 
+  shell_analysis: |
+    You are an expert shell script analyst specializing in infrastructure automation analysis.
+
+    Your expertise covers:
+    - Bash, Zsh, and POSIX shell script analysis
+    - Infrastructure automation and deployment scripts
+    - System configuration and setup automation
+    - Package management and software installation scripts
+    - Service management and monitoring scripts
+    - CI/CD and DevOps automation patterns
+    - Shell script best practices and security analysis
+    - Migration assessment for modern automation platforms
+
+    Key shell script concepts you understand:
+    - Shell syntax and advanced scripting patterns
+    - System administration automation
+    - Package managers (apt, yum, dnf, pip, npm)
+    - Service management (systemctl, service commands)
+    - File operations and configuration management
+    - Network operations and API interactions
+    - Error handling and logging patterns
+    - Cross-platform compatibility considerations
+
+    Analysis approach:
+    1. Identify shell type and automation purpose
+    2. Assess script complexity and dependencies
+    3. Evaluate automation patterns and best practices
+    4. Determine migration effort to modern platforms (Ansible, Docker, cloud-native)
+    5. Provide expert recommendations for modernization
+
+    Always consider automation context, security implications, and maintainability.
+    Focus on practical migration paths and modernization strategies.
+    Provide specific Ansible equivalent recommendations where applicable.
+
 prompts:
   chef_analysis_enhanced: |
     SYSTEM INSTRUCTION:
@@ -142,35 +224,86 @@ prompts:
     Now, analyze all the facts above and return ONLY a single, valid JSON object that fills EVERY required field as shown in the structure above.
     **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately.
 
-  context: |
-    SYSTEM INSTRUCTION:
+  salt_analysis: |
     {instruction}
+    
+    SALT CONTENT:
+    {salt_content}
+    
+    Analyze the Salt automation above and return ONLY valid JSON.
+    
+    Return a JSON object with these fields:
+    - success: true
+    - object_name: the name you detect
+    - object_type: STATE or PILLAR or FORMULA  
+    - detailed_analysis: your technical analysis
+    - complexity_level: Low or Medium or High
+    - primary_purpose: what this Salt code does
+    - managed_services: list of services
+    - managed_packages: list of packages
+    - ansible_equivalent: how to convert to Ansible
+    
+    Return ONLY valid JSON, no other text.
 
-    [CONTEXT REQUEST]
-    {context_input}
+  context: |
+    USER QUERY: {user_input}
+    You are a retrieval assistant for Infrastructure as Code patterns.
+    Use the knowledge_search tool to find relevant information.
+    Always respond to tool calls with valid, double-quoted JSON ONLY. Never add extra text, explanations, or comments.
 
-    Now, retrieve ONLY the most relevant, actionable context from the vector database. Do NOT answer or convert the code—just return the retrieved context. If no relevant documents are found, reply: 'No relevant patterns found for this input.'
 
   generate: |
-    SYSTEM INSTRUCTION:
     {instruction}
+
+    EXAMPLE OF MODERN, PRODUCTION-GRADE ANSIBLE PLAYBOOK FORMAT:
+
+    ---
+    - name: <Descriptive Playbook Name>
+      hosts: <target_group_or_all>
+      become: true
+      collections:
+        - ansible.builtin
+        # - community.<collection>
+      vars:
+        # Define variables as needed
+      tasks:
+        - name: Install required packages
+          ansible.builtin.package:
+            name: "{{ item }}"
+            state: present
+            use: <apt|yum>
+          loop:
+            - <package1>
+            - <package2>
+        - name: Ensure services are running
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: yes
+          loop:
+            - <service1>
+            - <service2>
+        - name: Manage config files
+          ansible.builtin.template:
+            src: <template.j2>
+            dest: <path>
+            mode: '0644'
+          notify: restart <service>
+      handlers:
+        - name: restart <service>
+          ansible.builtin.systemd:
+            name: <service>
+            state: restarted
 
     [CONTEXT]
     {context}
 
-    [INPUT CODE]
+    [INPUT CODE TO CONVERT]
     {input_code}
 
-    Please generate the playbook using the latest supported Ansible syntax and best practices.
+    OUTPUT: Only the YAML playbook, never markdown or explanations.
 
-    Now, generate ONLY a complete, production-ready Ansible playbook as specified above.
-    - Start with '---'
-    - NO markdown, NO prose, NO code fences
-    - Only YAML, and all required fields must be present
-    - If context is present, include it as YAML comments where appropriate
-    - The playbook must be usable as-is in Ansible
 
-    CRITICAL: Output ONLY the YAML playbook, and nothing else.
 
   validate: |
     SYSTEM INSTRUCTION:
@@ -192,19 +325,33 @@ agents:
       repetition_penalty: 1.0
     max_infer_iters: 1
 
-  - name: "context"
+  - name: "salt_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.context}"
+    instructions: "{agent_instructions.salt_analysis}"
     sampling_params:
       strategy:
         type: "greedy"
+        temperature: 0.1
       max_tokens: 4096
-    tools:
-      - name: "builtin::rag"
-        args:
-          vector_db_ids:
-            - "iac"
+      repetition_penalty: 1.0
     max_infer_iters: 1
+
+  - name: context
+    model: meta-llama/Llama-3.1-8B-Instruct
+    instructions: "{agent_instructions.context}"
+    sampling_params:
+      strategy:
+        type: greedy
+      max_tokens: 4096
+    toolgroups:
+      - name: builtin::rag
+        args:
+          vector_db_ids: ["iac"]
+          top_k: 3
+    tool_config:
+      tool_choice: auto
+    max_infer_iters: 3
+
 
   - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -212,13 +359,10 @@ agents:
     sampling_params:
       strategy:
         type: "greedy"
-      max_tokens: 4096
-    tools:
-      - name: "builtin::rag"
-        args:
-          vector_db_ids:
-            - "iac"
+        temperature: 0.1
+      max_tokens: 2048    # or adjust for your max output needs
     max_infer_iters: 1
+    # No toolgroups! No RAG.
 
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -236,6 +380,18 @@ agents:
   - name: "bladelogic_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"
     instructions: "{agent_instructions.bladelogic_analysis}"
+    sampling_params:
+      temperature: 0.1
+      top_p: 0.95
+      max_tokens: 4000
+    max_infer_iters: 3
+    toolgroups: []
+    tools: []
+    tool_config: {}
+
+  - name: "shell_analysis"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: "{agent_instructions.shell_analysis}"
     sampling_params:
       temperature: 0.1
       top_p: 0.95

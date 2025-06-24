@@ -6,7 +6,6 @@ import os
 from datetime import datetime
 from typing import Optional, Dict, Any, AsyncGenerator
 from pathlib import Path
-from json import JSONDecodeError
 
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import UserMessage
@@ -18,6 +17,7 @@ logger = logging.getLogger("CodeGeneratorAgent")
 
 
 def _clean_playbook_output(output: str) -> str:
+    """Clean playbook output - UNCHANGED from your original."""
     if not output or not output.strip():
         raise ValueError("Empty output received from LLM")
     output = re.sub(r"(?m)^(```+|~~~+)[\w\-]*\n?", '', output)
@@ -48,7 +48,8 @@ def _clean_playbook_output(output: str) -> str:
 
 class CodeGeneratorAgent:
     """
-    CodeGeneratorAgent - calls LlamaStack with configurable instructions/prompt.
+    CodeGeneratorAgent - AGENTIC approach using enhanced prompts only.
+    Let the LLM do the work, don't hard-code transformations.
     """
     def __init__(
         self,
@@ -65,7 +66,7 @@ class CodeGeneratorAgent:
         self.logger = logger
         self.config_loader = config_loader
 
-        # Load instruction/prompt from config.yaml
+        # Load instruction/prompt from config.yaml - UNCHANGED
         self.instruction = (
             self.config_loader.get_agent_instructions("generate")
             or self.config_loader.get_agent_config("generate")["instructions"]
@@ -74,17 +75,31 @@ class CodeGeneratorAgent:
             self.config_loader.config.get("prompts", {}).get("generate", None)
         )
         if not self.prompt_template:
-            # Safe fallback
+            # Enhanced fallback with modern examples
             self.prompt_template = (
-                "{instruction}\n\n[INPUT CODE]\n{input_code}\n\n[CONTEXT]\n{context}"
+                "{instruction}\n\n"
+                "MODERN ANSIBLE EXAMPLE:\n"
+                "---\n"
+                "- name: Example playbook\n"
+                "  hosts: all\n"
+                "  become: true\n"
+                "  tasks:\n"
+                "    - name: Install package\n"
+                "      ansible.builtin.package:\n"
+                "        name: httpd\n"
+                "        state: present\n"
+                "        use: yum\n"
+                "      when: ansible_facts['os_family'] == 'RedHat'\n\n"
+                "[CONTEXT]\n{context}\n\n"
+                "[INPUT CODE]\n{input_code}\n\n"
+                "Generate modern Ansible playbook using FQCN syntax like the example above."
             )
 
+        # Configuration flags - UNCHANGED
         self.detailed_logging = os.getenv("DETAILED_CODE_LOGGING", "true").lower() == "true"
         self.save_debug_files = os.getenv("SAVE_GENERATION_INPUTS", "false").lower() == "true"
         self.step_analysis = os.getenv("ENABLE_STEP_ANALYSIS", "false").lower() == "true"
         self.debug_dir = Path("./debug_logs") if self.save_debug_files else None
-
-        # Max chunks for streaming limit
         self.max_stream_chunks = int(os.getenv("MAX_STREAM_CHUNKS", "5000"))
 
         if self.save_debug_files and self.debug_dir:
@@ -98,6 +113,7 @@ class CodeGeneratorAgent:
         self.logger.info(f"CodeGeneratorAgent initialized with agent_id: {agent_id}")
 
     def create_new_session(self, correlation_id: str) -> str:
+        """UNCHANGED from your original."""
         try:
             response = self.client.agents.session.create(
                 agent_id=self.agent_id,
@@ -111,14 +127,50 @@ class CodeGeneratorAgent:
             self.logger.info(f"Falling back to default session: {self.session_id}")
             return self.session_id
 
+    def _analyze_output_quality(self, content: str) -> Dict[str, Any]:
+        """Simple analysis of what the LLM generated - no modifications."""
+        analysis = {
+            "has_fqcn": "ansible.builtin." in content or "community." in content,
+            "has_modern_facts": "ansible_facts[" in content,
+            "has_collections": "collections:" in content,
+            "starts_with_yaml": content.strip().startswith("---"),
+            "has_become": "become:" in content,
+            "has_handlers": "handlers:" in content,
+            "line_count": content.count('\n'),
+            "estimated_quality": "unknown"
+        }
+        
+        # Simple quality estimation based on modern patterns
+        score = 0
+        if analysis["has_fqcn"]: score += 40
+        if analysis["has_modern_facts"]: score += 20
+        if analysis["starts_with_yaml"]: score += 10
+        if analysis["has_become"]: score += 10
+        if analysis["has_handlers"]: score += 10
+        if analysis["line_count"] > 10: score += 10
+        
+        if score >= 80:
+            analysis["estimated_quality"] = "high"
+        elif score >= 50:
+            analysis["estimated_quality"] = "medium"
+        else:
+            analysis["estimated_quality"] = "low"
+            
+        analysis["quality_score"] = score
+        
+        return analysis
+
     def _log_generation_inputs(self, input_code: str, context: str, correlation_id: str, prompt: str):
+        """Enhanced logging without hard-coded analysis."""
         self.logger.info(f"Starting generation for correlation: {correlation_id}")
         self.logger.info(f"Input code length: {len(input_code)} characters")
         self.logger.info(f"Context length: {len(context)} characters")
         self.logger.info(f"Has context: {'YES' if context.strip() else 'NO'}")
         self.logger.info(f"Input code preview: {repr(input_code[:200])}...")
+        
         if context.strip():
             self.logger.info(f"Context preview: {repr(context[:300])}...")
+        
         prompt_stats = {
             "correlation_id": correlation_id,
             "timestamp": datetime.utcnow().isoformat(),
@@ -129,7 +181,8 @@ class CodeGeneratorAgent:
             "has_meaningful_context": bool(context.strip()),
             "context_to_code_ratio": len(context) / max(len(input_code), 1)
         }
-        self.logger.info(f"Prompt statistics: {json.dumps(prompt_stats, indent=2)}")
+        self.logger.info(f"Generation statistics: {json.dumps(prompt_stats, indent=2)}")
+        
         if self.detailed_logging:
             self.logger.info(f"=== DETAILED GENERATION LOG START (correlation: {correlation_id}) ===")
             self.logger.info(f"Full input code:\n{'-' * 50}\n{input_code}\n{'-' * 50}")
@@ -138,16 +191,25 @@ class CodeGeneratorAgent:
             self.logger.info(f"=== DETAILED GENERATION LOG END ===")
 
     def _log_generation_output(self, output: str, cleaned_output: str, correlation_id: str):
+        """Enhanced logging with quality analysis."""
         self.logger.info(f"Raw output length: {len(output)} characters")
         self.logger.info(f"Cleaned output length: {len(cleaned_output)} characters")
         self.logger.info(f"Output preview: {repr(cleaned_output[:200])}...")
+        
+        # Analyze what the LLM actually generated
+        quality_analysis = self._analyze_output_quality(cleaned_output)
+        self.logger.info(f"LLM output quality: {quality_analysis['estimated_quality']} (score: {quality_analysis['quality_score']}/100)")
+        self.logger.info(f"Modern features detected: {json.dumps({k: v for k, v in quality_analysis.items() if k.startswith('has_')}, indent=2)}")
+        
         if self.detailed_logging:
             self.logger.info(f"=== OUTPUT DETAILS (correlation: {correlation_id}) ===")
             self.logger.info(f"Raw LLM output:\n{'-' * 50}\n{output}\n{'-' * 50}")
             self.logger.info(f"Cleaned playbook:\n{'-' * 50}\n{cleaned_output}\n{'-' * 50}")
+            self.logger.info(f"Quality analysis: {json.dumps(quality_analysis, indent=2)}")
             self.logger.info(f"=== OUTPUT DETAILS END ===")
 
     def _render_prompt(self, input_code: str, context: str) -> str:
+        """UNCHANGED from your original."""
         return self.prompt_template.format(
             instruction=self.instruction,
             input_code=input_code,
@@ -155,6 +217,7 @@ class CodeGeneratorAgent:
         )
 
     async def generate(self, input_code: str, context: Optional[str] = "", correlation_id: Optional[str] = None) -> str:
+        """UNCHANGED core logic - just pass through what LLM generates."""
         correlation_id = correlation_id or str(uuid.uuid4())
         context = context or ""
         if not input_code or not input_code.strip():
@@ -243,9 +306,14 @@ class CodeGeneratorAgent:
                 raise RuntimeError(f"Output cleaning failed: {clean_error}")
             if not cleaned_output or len(cleaned_output.strip()) < 10:
                 raise RuntimeError("Cleaned output is too short or empty")
+            
+            # Just log what we got - no transformations
             self._log_generation_output(output, cleaned_output, correlation_id)
             self.logger.info(f"Generation completed successfully for correlation: {correlation_id}")
+            
+            # Return exactly what the LLM generated (after basic cleaning)
             return cleaned_output
+            
         except Exception as e:
             self.logger.error(f"Playbook generation failed for correlation {correlation_id}: {str(e)}")
             error_context = {
@@ -261,6 +329,7 @@ class CodeGeneratorAgent:
             raise RuntimeError(f"Playbook generation failed for {correlation_id}: {str(e)}")
 
     async def generate_stream(self, input_code: str, context: Optional[str] = "", correlation_id: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
+        """UNCHANGED from your original."""
         correlation_id = correlation_id or str(uuid.uuid4())
         try:
             yield {
@@ -291,13 +360,20 @@ class CodeGeneratorAgent:
             }
 
     def get_status(self) -> Dict[str, Any]:
+        """Status without hard-coded features."""
         return {
             "agent_id": self.agent_id,
             "session_id": self.session_id,
             "client_base_url": str(self.client.base_url) if hasattr(self.client, 'base_url') else "unknown",
             "timeout": self.timeout,
             "status": "ready",
-            "pattern": "LSS API",
+            "pattern": "LSS API - Agentic Approach",
+            "approach": {
+                "type": "prompt_driven",
+                "post_processing": "minimal",
+                "hard_coded_rules": "none",
+                "quality_analysis": "observational_only"
+            },
             "logging_config": {
                 "detailed_logging": self.detailed_logging,
                 "debug_file_saving": self.save_debug_files,
@@ -308,6 +384,7 @@ class CodeGeneratorAgent:
         }
 
     async def health_check(self) -> bool:
+        """UNCHANGED from your original."""
         try:
             test_correlation = f"health-check-{uuid.uuid4()}"
             messages = [UserMessage(role="user", content="Respond with: HEALTH_CHECK_OK")]
