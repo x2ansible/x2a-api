@@ -16,6 +16,7 @@ from routes.files import router as files_router
 from routes.generate import router as generate_router
 from routes.validate import router as validate_router
 from routes.vector_db import router as vector_db_router
+from routes.ansible_upgrade import router as ansible_upgrade_router
 
 from agents.agent import AgentManager
 from config.config import ConfigLoader
@@ -37,6 +38,8 @@ agents_config = config_loader.get_agents_config()
 
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types.agent_create_params import AgentConfig
+from llama_stack_client.lib.agents.react.agent import ReActAgent
+from llama_stack_client.lib.agents.react.tool_parser import ReActOutput
 
 class AgentRegistry:
     def __init__(self, client: LlamaStackClient):
@@ -72,7 +75,14 @@ class AgentRegistry:
         agent_name = agent_config_dict["name"]
         logger.info(f"🔍 Processing agent creation request for: {agent_name}")
         
-        # === DEBUG: Log the full config being processed ===
+        # Skip LlamaStack registration for ReAct agents
+        if agent_name == "ansible_upgrade_analysis":
+            logger.info(f"⏭️ Skipping LlamaStack registration for ReAct agent: {agent_name}")
+            dummy_id = f"react-{uuid.uuid4()}"
+            self.agents[agent_name] = dummy_id
+            self.agent_configs[agent_name] = agent_config_dict
+            return dummy_id
+        
         logger.info(f"🔧 Agent config keys: {list(agent_config_dict.keys())}")
         logger.info(f"🔧 Tools in config: {agent_config_dict.get('tools', [])}")
         logger.info(f"🔧 Toolgroups in config: {agent_config_dict.get('toolgroups', [])}")
@@ -92,7 +102,6 @@ class AgentRegistry:
         
         logger.info(f"🆕 Creating new agent: {agent_name}")
         
-        # === DEBUG: Log what we're about to pass to AgentConfig ===
         tools_to_pass = agent_config_dict.get("tools", [])
         toolgroups_to_pass = agent_config_dict.get("toolgroups", [])
         tool_config_to_pass = agent_config_dict.get("tool_config", {})
@@ -113,7 +122,6 @@ class AgentRegistry:
             enable_session_persistence=True,
         )
         
-        # === DEBUG: Log the AgentConfig object ===
         logger.info(f"🔧 AgentConfig created with tools: {getattr(agent_config, 'tools', 'NOT_SET')}")
         logger.info(f"🔧 AgentConfig created with toolgroups: {getattr(agent_config, 'toolgroups', 'NOT_SET')}")
         
@@ -125,7 +133,6 @@ class AgentRegistry:
             self.agent_configs[agent_name] = agent_config_dict
             logger.info(f" Created and registered new agent: {agent_name} with ID: {agent_id}")
             
-            # === DEBUG: Verify the created agent has tools ===
             try:
                 import httpx
                 verify_response = httpx.get(f"{self.client.base_url}/v1/agents/{agent_id}", timeout=10)
@@ -175,6 +182,14 @@ class AgentRegistry:
         if agent_name not in self.agents:
             raise ValueError(f"Agent {agent_name} not registered")
         agent_id = self.agents[agent_name]
+        
+        # Skip session creation for ReAct agents
+        if agent_name == "ansible_upgrade_analysis":
+            dummy_session = f"react-session-{uuid.uuid4()}"
+            self.sessions[agent_name] = dummy_session
+            logger.info(f"📱 Created dummy session {dummy_session} for ReAct agent: {agent_name}")
+            return dummy_session
+        
         if agent_name in self.sessions:
             logger.info(f"♻️ Reusing existing session for agent: {agent_name}")
             return self.sessions[agent_name]
@@ -250,7 +265,6 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"🔗 Connected to LlamaStack: {llamastack_base_url}")
     
-    # === DEBUG SECTION - Add this to see what's happening ===
     logger.info("🤖 Loading agent configurations...")
     agents_config = config_loader.get_agents_config()
     logger.info(f"📊 Total agents found in config.yaml: {len(agents_config)}")
@@ -302,41 +316,16 @@ async def lifespan(app: FastAPI):
             logger.error(f" Failed to setup agent {i+1}/{len(agents_config)}: {agent_name} - {e}")
             raise
 
-    # === FINAL VERIFICATION ===
     logger.info(f"📋 Registration Summary:")
     logger.info(f"   Agents in config: {len(agents_config)}")
     logger.info(f"   Agents registered: {len(registered_agents)}")
     logger.info(f"   Registered agent names: {list(registered_agents.keys())}")
-    
-    # Check LlamaStack again after registration
-    logger.info("🔍 Final verification - agents in LlamaStack...")
-    try:
-        if hasattr(client.agents, "list"):
-            response = client.agents.list()
-            agents_data = response.data if hasattr(response, 'data') else response
-        else:
-            import httpx
-            response = httpx.get(f"{client.base_url}/v1/agents", timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            agents_data = data.get("data", [])
-        
-        logger.info(f"🌐 Total agents in LlamaStack after registration: {len(agents_data)}")
-        for agent in agents_data:
-            agent_config = agent.get("agent_config", {})
-            agent_name = agent_config.get("name", "UNNAMED")
-            agent_id = agent.get("agent_id", "NO_ID")
-            created_by = "US" if agent_name in registered_agents else "OTHER"
-            logger.info(f"   🔸 {created_by}: {agent_name} (ID: {agent_id[:8]}...)")
-            
-    except Exception as e:
-        logger.warning(f"⚠️ Could not verify final LlamaStack agents: {e}")
 
     app.state.registered_agents = registered_agents
     agent_manager = AgentManager(llamastack_base_url)
     app.state.agent_manager = agent_manager
 
-    # === Setup ChefAnalysisAgent with prompt template ===
+    # === Setup ChefAnalysisAgent ===
     chef_agent_name = None
     if "chef_analysis" in registered_agents:
         chef_agent_name = "chef_analysis"
@@ -407,7 +396,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ salt_analysis agent not found in config!")
 
-    # === Setup ContextAgent - FIXED FOR TOOLGROUPS ===
+    # === Setup ContextAgent ===
     if "context" in registered_agents:
         context_info = registered_agents["context"]
         context_config = context_info["config"]
@@ -430,7 +419,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ context agent not found in config!")
 
-    # === Setup CodeGeneratorAgent with prompt/instructions from config ===
+    # === Setup CodeGeneratorAgent ===
     if "generate" in registered_agents:
         codegen_info = registered_agents["generate"]
         codegen_prompt = config_loader.config.get("prompts", {}).get("generate")
@@ -448,7 +437,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ generate agent not found in config!")
 
-    # === Setup ValidationAgent with enhanced error handling and validation ===
+    # === Setup ValidationAgent ===
     if "validate" in registered_agents:
         validation_info = registered_agents["validate"]
         validation_prompt = config_loader.config.get("prompts", {}).get("validate")
@@ -489,6 +478,26 @@ async def lifespan(app: FastAPI):
         logger.error(" validate agent not found in config!")
         raise RuntimeError("ValidationAgent configuration missing from config.yaml!")
 
+    # === Setup AnsibleUpgradeAnalysisAgent (ReAct Style) ===
+    if "ansible_upgrade_analysis" in registered_agents:
+        try:
+            logger.info("🔄 Initializing Ansible Upgrade Analysis ReAct agent...")
+            
+            from agents.ansible_upgrade.agent import AnsibleUpgradeAnalysisAgent
+            
+            upgrade_agent = AnsibleUpgradeAnalysisAgent(
+                client=client,
+                config_loader=config_loader,
+                agent_name="ansible_upgrade_analysis"
+            )
+            app.state.ansible_upgrade_agent = upgrade_agent
+            logger.info(f"🔄 AnsibleUpgradeAnalysisAgent ready (ReAct): {upgrade_agent.agent_name}")
+        except Exception as e:
+            logger.error(f" Failed to initialize AnsibleUpgradeAnalysisAgent: {e}")
+            logger.warning("⚠️ Continuing without Ansible Upgrade Analysis agent")
+    else:
+        logger.warning("⚠️ ansible_upgrade_analysis agent not found in config!")
+
     # --- File upload directory setup ---
     upload_dir = os.getenv("UPLOAD_DIR")
     if not upload_dir:
@@ -526,7 +535,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="X2A Agents API",
     version="1.0.0",
-    description="Multi-agent IaC API",
+    description="Multi-agent IaC API with Ansible Upgrade Analysis (ReAct)",
     lifespan=lifespan
 )
 
@@ -548,6 +557,7 @@ app.include_router(files_router, prefix="/api")
 app.include_router(generate_router, prefix="/api")
 app.include_router(validate_router, prefix="/api")
 app.include_router(vector_db_router, prefix="/api")
+app.include_router(ansible_upgrade_router, prefix="/api")
 
 @app.get("/")
 async def root():
@@ -586,14 +596,23 @@ async def root():
         except Exception as e:
             context_status = {"error": str(e)}
     
+    # Add ansible upgrade agent status (ReAct)
+    ansible_upgrade_status = {}
+    if hasattr(app.state, 'ansible_upgrade_agent'):
+        try:
+            ansible_upgrade_status = app.state.ansible_upgrade_agent.get_status()
+        except Exception as e:
+            ansible_upgrade_status = {"error": str(e)}
+    
     return {
         "status": "ok",
-        "message": " Welcome to X2A multi-agent API",
+        "message": " Welcome to X2A multi-agent API with Ansible Upgrade Analysis (ReAct)",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Registry-based (All agents including Salt and Shell)",
+        "agent_pattern": "Mixed: LlamaStack + ReAct (Ansible Upgrade)",
         "validation_agent_status": validation_status,
         "shell_agent_status": shell_status,
         "salt_agent_status": salt_status,
         "context_agent_status": context_status,
+        "ansible_upgrade_status": ansible_upgrade_status,
     }

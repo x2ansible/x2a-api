@@ -1,0 +1,41 @@
+---
+- hosts: webservers
+  sudo: yes
+  vars:
+    nginx_conf: |
+      user  nginx;
+      worker_processes  1;
+
+      events {
+          worker_connections  1024;
+      }
+
+      http {
+          server {
+              listen       80;
+              server_name  localhost;
+
+              location / {
+                  root   /usr/share/nginx/html;
+                  index  index.html index.htm;
+              }
+          }
+      }
+  tasks:
+    - name: Install EPEL repository
+      action: yum name=epel-release state=present
+
+    - name: Install nginx
+      action: yum name=nginx state=present
+
+    - name: Write nginx configuration
+      action: copy content="{{ nginx_conf }}" dest=/etc/nginx/nginx.conf owner=root group=root mode=0644
+      notify:
+        - restart nginx
+
+    - name: Ensure nginx is running and enabled
+      action: service name=nginx state=started enabled=yes
+
+  handlers:
+    - name: restart nginx
+      action: service name=nginx state=restarted

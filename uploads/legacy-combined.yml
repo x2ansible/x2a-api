@@ -1,0 +1,45 @@
+cat > legacy_combined.yml <<'EOF'
+---
+- hosts: webservers
+  sudo: yes
+  vars:
+    http_port: 8080
+    doc_root: /var/www/html
+    conf_template: "templates/httpd.conf.j2"
+  roles:
+    - { role: legacy_common }
+    - { role: security_hardening, level: basic }
+  tasks:
+    - include: tasks/install_apache.yml
+
+    - name: Ensure document root exists
+      file: path={{ doc_root }} state=directory owner=apache group=apache mode=0755
+
+    - name: Install Apache
+      yum: name=httpd state=installed
+
+    - name: Copy custom index.html
+      copy: src=files/index.html dest={{ doc_root }}/index.html owner=apache group=apache mode=0644
+
+    - name: Template httpd.conf
+      template: src={{ conf_template }} dest=/etc/httpd/conf/httpd.conf
+      notify:
+        - restart apache
+
+    - name: Add firewall rule for HTTP
+      command: firewall-cmd --permanent --add-port={{ http_port }}/tcp
+      ignore_errors: yes
+
+    - name: Reload firewalld
+      service: name=firewalld state=reloaded
+
+    - name: Start Apache and enable on boot
+      service: name=httpd state=started enabled=true
+
+    - name: Debug site URL
+      debug: msg="Access the site at http://{{ inventory_hostname }}:{{ http_port }}/"
+      
+  handlers:
+    - name: restart apache
+      service: name=httpd state=restarted
+EOF

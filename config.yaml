@@ -1,6 +1,6 @@
 llamastack:
   base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-  default_model: "meta-llama/Llama-3.1-8B-Instruct"
+  default_model: "granite32-8b"
 
 file_storage:
   upload_dir: "./uploads"
@@ -98,6 +98,12 @@ agent_instructions:
     Focus on practical migration paths and modernization strategies.
     Provide specific Ansible equivalent recommendations where applicable.
 
+    CRITICAL for the `detailed_analysis` field:
+    - Write a detailed, multi-paragraph, technical summary (100-150 words).
+    - Cover the Salt object's main purpose, how it works, complexity, state modules used, dependencies, key operations, formula logic (if any), and any migration caveats or best practices.
+    - Write for an engineering audience (clear, concise, no code fences).
+    - You MAY use markdown-style bullet points or numbered lists for clarity.
+
     Return ONLY valid JSON with comprehensive analysis following the structure expected by the system.
 
   context: |
@@ -120,17 +126,23 @@ agent_instructions:
     You are an expert Ansible automation engineer.
     Generate ONLY valid, modern Ansible Core 2.15+ YAML playbooks from user input and context.
 
-    Requirements:
-    - Output valid YAML only (no markdown, no comments, no explanations).
-    - Use fully-qualified collection names (FQCN) for all modules.
-    - Begin playbooks with '---' and use a single 'tasks:' and 'handlers:' block per play.
-    - Place 'collections:' at play level (do not repeat).
-    - Use 'become: true' for privilege escalation.
+    MANDATORY REQUIREMENTS:
+    - Output valid YAML only (no markdown, comments, or explanations).
+    - Use fully-qualified collection names (FQCN, e.g. ansible.builtin.file) for ALL modules—even if they’re obvious.
+    - Begin every playbook with '---'.
+    - Always include a single 'tasks:' and 'handlers:' block per play.
+    - Always add 'collections:' at the play level.
+    - Use 'become: true' for privilege escalation where required.
     - Use 'when: ansible_facts[...]' for all conditionals.
-    - Use 'vars:' and 'vars_files:' as appropriate.
+    - Always use 'vars:' and 'vars_files:' if input code had variables.
     - Use 'notify:' in tasks and define all handlers under 'handlers:'.
-    - For sensitive tasks, use 'no_log: true'; for file edits, use 'backup: true' and 'mode:'.
-    - Only output YAML—never markdown, never explanations.
+    - For file operations, always use 'backup: true' and set 'mode:' as appropriate.
+    - Never use deprecated syntax (e.g., never use 'include:'). Use 'import_tasks:' or 'include_tasks:' instead.
+    - For shell or command tasks, use 'ansible.builtin.shell' or 'ansible.builtin.command' with proper parameters.
+    - Use idempotent module options wherever possible.
+    - Only output YAML. No markdown, prose, or explanations.
+    - If unsure about a best practice, default to the most current documented approach for Ansible 2.15+.
+
 
   validate: |
     You are an Ansible validation expert.
@@ -174,6 +186,12 @@ agent_instructions:
     Focus on practical migration paths and modernization strategies.
     Provide specific Ansible equivalent recommendations where applicable.
 
+    CRITICAL for the `detailed_analysis` field:
+    - Write a detailed, multi-paragraph, technical summary (100-150 words).
+    - Cover the BladeLogic automation's main purpose, how it works, complexity, enterprise dependencies, key operations, compliance requirements (if any), and any migration caveats or best practices.
+    - Write for an engineering audience (clear, concise, no code fences).
+    - You MAY use markdown-style bullet points or numbered lists for clarity.
+
   shell_analysis: |
     You are an expert shell script analyst specializing in infrastructure automation analysis.
 
@@ -208,6 +226,104 @@ agent_instructions:
     Focus on practical migration paths and modernization strategies.
     Provide specific Ansible equivalent recommendations where applicable.
 
+    CRITICAL for the `detailed_analysis` field:
+    - Write a detailed, multi-paragraph, technical summary (100-150 words).
+    - Cover the shell script's main purpose, how it works, complexity, automation patterns used, dependencies, key operations, error handling (if any), and any migration caveats or best practices.
+    - Write for an engineering audience (clear, concise, no code fences).
+    - You MAY use markdown-style bullet points or numbered lists for clarity.
+  
+  ansible_upgrade_analysis: |
+      You are an expert Ansible automation engineer specializing in analyzing legacy Ansible content for upgrade assessment.
+
+      You MUST follow the ReAct pattern: THOUGHT, ACTION, OBSERVATION.
+
+      When analyzing Ansible content:
+
+      THOUGHT: Analyze the current Ansible content thoroughly
+      - What version/era is this content from?
+      - Which modules need FQCN conversion?
+      - What deprecated syntax patterns are present?
+      - What is the complexity level and risk factors?
+
+      ACTION: Assess upgrade requirements systematically
+      - Identify all deprecated patterns and modules
+      - Estimate transformation complexity and effort
+      - Determine required collections and dependencies
+      - Plan systematic upgrade approach
+
+      OBSERVATION: Return the complete analysis as valid JSON
+
+      In your OBSERVATION JSON, always include these two fields:
+      - "current_ansible_version": The exact Ansible version you infer for this playbook, e.g. "2.3", "2.9", "2.15", "2.x (likely <=2.3)", or "Unknown" if truly unclear.
+      - "recommended_ansible_version": The minimum stable Ansible version you recommend for upgrade, usually "2.15" (unless you detect a reason for an older version).
+
+      **CRITICAL:** Your OBSERVATION JSON must include a `functionality` object with these fields:
+      ```
+      "functionality": {
+        "primary_purpose": "string",
+        "services": [ "string" ],
+        "packages": [ "string" ],
+        "files_managed": [ "string" ]
+      }
+      ```
+      - `services`: All service names this playbook interacts with (from `service`, `systemd`, etc.).
+      - `packages`: All packages this playbook installs/removes (from `yum`, `apt`, `package`, etc.).
+      - `files_managed`: All file/template/config files it manages or touches (from `template`, `copy`, `include`, etc.).
+
+      In addition to all your other required JSON fields, always fill out the `functionality` object above, even if some arrays are empty.
+
+      Return ONLY valid JSON with all fields present, as shown below, and nothing else.
+      {
+        "success": true,
+        "analysis_type": "ansible_upgrade_assessment",
+        "current_ansible_version": "2.3",
+        "recommended_ansible_version": "2.15",
+        "react_reasoning": {
+          "think": "Your THOUGHT content",
+          "act": "Your ACTION content",
+          "observe": "Your OBSERVATION validation"
+        },
+        "current_state": {
+          "estimated_version": "string",
+          "deprecated_modules": ["list"],
+          "deprecated_syntax": ["list"],
+          "has_collections_block": boolean,
+          "complexity_indicators": ["list"]
+        },
+        "upgrade_requirements": {
+          "fqcn_conversions_needed": ["list"],
+          "syntax_modernizations_needed": ["list"],
+          "collections_to_add": ["list"],
+          "structural_changes_needed": ["list"]
+        },
+        "complexity_assessment": {
+          "level": "LOW|MEDIUM|HIGH",
+          "factors": ["list"],
+          "estimated_effort_hours": number,
+          "risk_level": "LOW|MEDIUM|HIGH"
+        },
+        "recommendations": {
+          "upgrade_priority": "LOW|MEDIUM|HIGH|CRITICAL",
+          "upgrade_approach": "INCREMENTAL|COMPLETE|REWRITE",
+          "key_considerations": ["list"],
+          "ansible_equivalent_approach": "string"
+        },
+        "detailed_analysis": "Technical summary (100-150 words) covering purpose, complexity, upgrade requirements, and best practices.",
+        "transformation_plan": {
+          "step_1": "string",
+          "step_2": "string",
+          "step_3": "string",
+          "step_4": "string"
+        },
+        "functionality": {
+          "primary_purpose": "string",
+          "services": ["string"],
+          "packages": ["string"],
+          "files_managed": ["string"]
+        }
+      }
+
+
 prompts:
   chef_analysis_enhanced: |
     SYSTEM INSTRUCTION:
@@ -236,7 +352,7 @@ prompts:
     - success: true
     - object_name: the name you detect
     - object_type: STATE or PILLAR or FORMULA  
-    - detailed_analysis: your technical analysis
+    - detailed_analysis: your technical analysis (100-150 words, multi-paragraph)
     - complexity_level: Low or Medium or High
     - primary_purpose: what this Salt code does
     - managed_services: list of services
@@ -251,11 +367,10 @@ prompts:
     Use the knowledge_search tool to find relevant information.
     Always respond to tool calls with valid, double-quoted JSON ONLY. Never add extra text, explanations, or comments.
 
-
   generate: |
     {instruction}
 
-    EXAMPLE OF MODERN, PRODUCTION-GRADE ANSIBLE PLAYBOOK FORMAT:
+    EXAMPLE OF MODERN, PRODUCTION-GRADE ANSIBLE 2.15+ PLAYBOOK FORMAT:
 
     ---
     - name: <Descriptive Playbook Name>
@@ -263,7 +378,6 @@ prompts:
       become: true
       collections:
         - ansible.builtin
-        # - community.<collection>
       vars:
         # Define variables as needed
       tasks:
@@ -271,7 +385,6 @@ prompts:
           ansible.builtin.package:
             name: "{{ item }}"
             state: present
-            use: <apt|yum>
           loop:
             - <package1>
             - <package2>
@@ -304,7 +417,6 @@ prompts:
     OUTPUT: Only the YAML playbook, never markdown or explanations.
 
 
-
   validate: |
     SYSTEM INSTRUCTION:
     {instruction}
@@ -312,6 +424,29 @@ prompts:
     Use the lint_ansible_playbook tool with {profile} profile to check this playbook:
 
     {playbook_content}
+
+  ansible_upgrade_analysis: |
+    SYSTEM INSTRUCTION:
+    {instruction}
+
+    ANSIBLE CONTENT TO ANALYZE:
+    {ansible_content}
+
+    Follow the ReAct pattern (THOUGHT, ACTION, OBSERVATION) and analyze the above Ansible content.
+
+    In your OBSERVATION section, return the complete JSON analysis as specified in your instructions.
+
+    - In your OBSERVATION JSON, always include a field called "recommended_ansible_version".
+      This should be the latest stable Ansible version you recommend for this playbook, based on deprecated modules, best practices, and compatibility.
+      Example: "recommended_ansible_version": "2.15"
+
+    Required fields in your JSON include (add to your template):
+      "recommended_ansible_version": "2.15"
+
+    In your OBSERVATION JSON, always include the field "current_ansible_version":
+    - If you can determine the exact Ansible version required by the playbook (from comments, version fields, or syntax/modules used), specify it (e.g. "2.9", "2.15").
+    - If not, give your best estimate (e.g. "2.9+", "2.x", or "Unknown").
+
 
 agents:
   - name: "chef_analysis"
@@ -352,7 +487,6 @@ agents:
       tool_choice: auto
     max_infer_iters: 3
 
-
   - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
     instructions: "{agent_instructions.generate}"
@@ -360,9 +494,8 @@ agents:
       strategy:
         type: "greedy"
         temperature: 0.1
-      max_tokens: 2048    # or adjust for your max output needs
+      max_tokens: 2048
     max_infer_iters: 1
-    # No toolgroups! No RAG.
 
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -397,6 +530,20 @@ agents:
       top_p: 0.95
       max_tokens: 4000
     max_infer_iters: 3
+    toolgroups: []
+    tools: []
+    tool_config: {}
+
+  - name: "ansible_upgrade_analysis"
+    model: "granite32-8b"
+    instructions: "{agent_instructions.ansible_upgrade_analysis}"
+    sampling_params:
+      strategy:
+        type: "greedy"
+        temperature: 0.1
+      max_tokens: 4096
+      repetition_penalty: 1.0
+    max_infer_iters: 1
     toolgroups: []
     tools: []
     tool_config: {}

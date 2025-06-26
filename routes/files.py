@@ -95,6 +95,10 @@ async def get_file_tree(path: str = "") -> Dict[str, Union[str, list]]:
             # Kubernetes files
             ".yaml", ".yml", ".json",
             
+            
+            # Salt files
+            ".sls",
+            
             # General automation and configuration files
             ".py", ".js", ".ts", ".go", ".java", ".scala",
             ".conf", ".cfg", ".ini", ".env", ".config",
