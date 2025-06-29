@@ -1,6 +1,0 @@
-{
-  "files": {
-    "deploy_agent.sh": "#!/bin/bash\necho Installing BladeLogic agent\nif command -v rscd > /dev/null; then\n  echo Agent already installed\nelse\n  yum install -y bladelogic-rscd\nfi\nsystemctl enable rscd\nsystemctl start rscd",
-    "compliance.yaml": "rules:\n  - id: HIPAA-01\n    description: SSH root login disabled\n    command: grep PermitRootLogin /etc/ssh/sshd_config\n    expected: PermitRootLogin no"
-  }
-}

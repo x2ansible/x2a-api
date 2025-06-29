@@ -1,6 +1,6 @@
 llamastack:
   base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-  default_model: "granite32-8b"
+  default_model: "meta-llama/Llama-3.1-8B-Instruct"
 
 file_storage:
   upload_dir: "./uploads"

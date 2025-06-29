@@ -1,0 +1,6 @@
+---
+http_port: 80
+apache_listen_ip: 0.0.0.0
+firewall_allowed_ports:
+  - 80
+  - 443

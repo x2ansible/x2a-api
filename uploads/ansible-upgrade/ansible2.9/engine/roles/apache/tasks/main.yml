@@ -1,0 +1,20 @@
+---
+- name: Ensure Apache is installed
+  yum:
+    name: httpd
+    state: present
+
+- name: Deploy Apache config file
+  template:
+    src: httpd.conf.j2
+    dest: /etc/httpd/conf/httpd.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Apache
+
+- name: Ensure Apache is started and enabled
+  service:
+    name: httpd
+    state: started
+    enabled: yes

@@ -1,0 +1,8 @@
+# Sample httpd.conf for Ansible 2.9 style
+Listen {{ apache_listen_ip }}:{{ http_port }}
+
+<VirtualHost *:{{ http_port }}>
+    DocumentRoot "/var/www/html"
+    ErrorLog "/var/log/httpd/error.log"
+    CustomLog "/var/log/httpd/access.log" combined
+</VirtualHost>

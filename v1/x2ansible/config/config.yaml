@@ -1,0 +1,289 @@
+# LlamaStack Configuration
+llamastack:
+  base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+  default_model: "meta-llama/Llama-3.1-8B-Instruct"
+  timeout: 180
+
+# File storage configuration
+file_storage:
+  upload_dir: "./uploads"
+  max_file_size: 10485760  # 10MB
+  allowed_extensions: [".rb", ".yml", ".yaml", ".json", ".tf", ".pp", ".erb", ".conf", ".sls", ".py", ".sh", ".ps1"]
+
+# Vector database configuration
+vector_db:
+  default_db_id: "iac"
+  default_chunk_size: 512
+
+# Unified Agent Configuration
+agents:
+  - name: "iac_phased_analysis_agent"
+    agent_pattern: "standard"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    tools: []
+    toolgroups: []
+    instructions: |
+      You are an expert Infrastructure as Code analyst.
+      Your job is to analyze IaC files and output a single, valid JSON object matching the schema below. Do not include markdown, tables, commentary, or explanations. Only output the JSON.
+
+      # SCHEMA
+      {
+        "id": "iac:<source_tool>:<module_type>:<name>:<version>",
+        "module_name": "string, e.g., 'apache_cookbook'",
+        "source_tool": "string, e.g., 'Chef', 'Ansible'",
+        "version": "string",
+        "last_analysis_timestamp": "ISO8601 string, e.g. '2025-06-29T00:00:00Z'",
+        "summary": {
+          "purpose_and_use_case": "string describing WHY this module exists and its intended use",
+          "plain_english_description": "string with a comprehensive English summary of WHAT the module does",
+          "tags": ["array of keyword strings, e.g., ['chef','apache','webserver']"]
+        },
+        "analytics": {
+          "metrics": {
+            "total_resources": "integer",
+            "service_count": "integer",
+            "package_count": "integer",
+            "files_managed": "integer",
+            "dependency_count": "integer"
+          },
+          "assessment": {
+            "complexity": "Low|Medium|High",
+            "risk": "Low|Medium|High",
+            "reasoning": "string summarizing why"
+          }
+        },
+        "structured_analysis": {
+          "resource_inventory": [
+            {"type": "string, e.g. 'package' or 'service'", "name": "string"}
+          ],
+          "key_configurations": [
+            {"resource": "string", "description": "string", "details": {"key": "value"}}
+          ],
+          "dependencies": [
+            {"name": "string", "type": "string", "description": "string"}
+          ],
+          "embedded_logic": [
+            {"trigger": "string", "action": "string", "description": "string"}
+          ]
+        }
+      }
+
+      # OUTPUT REQUIREMENTS:
+      - Fill EVERY field, even if unknown, with either a valid value, empty object/array, or the string "unknown".
+      - Use the schema field types and purposes as your guide.
+      - Your output will be parsed by software. Any extra text, missing field, or invalid JSON will break downstream processing.
+      - For timestamps use UTC and the format YYYY-MM-DDTHH:MM:SSZ.
+      - Do NOT include markdown, comments, or explanations—**ONLY output the JSON block**.
+      - Example output (replace values as needed):
+
+      {
+        "id": "iac:Chef:module:apache_cookbook:1.0",
+        "module_name": "apache_cookbook",
+        "source_tool": "Chef",
+        "version": "1.0",
+        "last_analysis_timestamp": "2025-06-29T00:00:00Z",
+        "summary": {
+          "purpose_and_use_case": "Automates Apache HTTP Server installation and configuration.",
+          "plain_english_description": "This Chef cookbook installs the httpd package, ensures the service is enabled and running, and manages the configuration file with a template.",
+          "tags": ["chef", "apache", "webserver"]
+        },
+        "analytics": {
+          "metrics": {
+            "total_resources": 3,
+            "service_count": 1,
+            "package_count": 1,
+            "files_managed": 1,
+            "dependency_count": 0
+          },
+          "assessment": {
+            "complexity": "Low",
+            "risk": "Low",
+            "reasoning": "Only basic package, service, and template resources are managed. No external dependencies."
+          }
+        },
+        "structured_analysis": {
+          "resource_inventory": [
+            {"type": "package", "name": "httpd"},
+            {"type": "service", "name": "httpd"},
+            {"type": "file", "name": "/etc/httpd/conf/httpd.conf"}
+          ],
+          "key_configurations": [
+            {
+              "resource": "service:httpd",
+              "description": "Manages httpd service; restarts on config changes.",
+              "details": {"enabled": true, "state": "started"}
+            }
+          ],
+          "dependencies": [],
+          "embedded_logic": [
+            {
+              "trigger": "Configuration file changed",
+              "action": "Restart httpd service",
+              "description": "Service restarts if its template changes"
+            }
+          ]
+        }
+      }
+
+    sampling_params:
+      strategy:
+        type: "greedy"
+      max_tokens: 8192
+    max_infer_iters: 5
+
+  # Context/RAG agent (keeps existing functionality)
+  - name: context
+    agent_pattern: "standard"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: |
+      You are a RAG retrieval assistant specializing in Infrastructure as Code patterns.
+
+      MANDATORY WORKFLOW - FOLLOW EXACTLY:
+      1. IMMEDIATELY call the knowledge_search tool with the user's exact input as the query parameter.
+      2. WAIT for the complete tool response with retrieved content.
+      3. If the tool returns relevant content, format and return it clearly.
+      4. If no relevant content is found, respond: "No relevant patterns found for this input."
+
+      CRITICAL RULES:
+      - NEVER respond without first calling the knowledge_search tool
+      - NEVER generate answers from your own knowledge
+      - ALWAYS use the user's input as the search query
+      - The knowledge_search tool will access the Infrastructure as Code vector database
+      - Return retrieved content in a clear, organized format
+    sampling_params:
+      strategy:
+        type: greedy
+      max_tokens: 4096
+    toolgroups:
+      - name: builtin::rag
+        args:
+          vector_db_ids: ["iac"]
+          top_k: 3
+    tool_config:
+      tool_choice: auto
+    max_infer_iters: 3
+
+  - name: "generate"
+    agent_pattern: "standard"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    tools: []
+    instructions: |
+      You are an expert Ansible automation engineer.
+      Generate ONLY valid, modern Ansible Core 2.15+ YAML playbooks from user input and context.
+
+      MANDATORY REQUIREMENTS:
+      - Output valid YAML only (no markdown, comments, or explanations).
+      - Use fully-qualified collection names (FQCN, e.g. ansible.builtin.file) for ALL modules—even if they're obvious.
+      - Begin every playbook with '---'.
+      - Always include a single 'tasks:' and 'handlers:' block per play.
+      - Always add 'collections:' at the play level.
+      - Use 'become: true' for privilege escalation where required.
+      - Use 'when: ansible_facts[...]' for all conditionals.
+      - Always use 'vars:' and 'vars_files:' if input code had variables.
+      - Use 'notify:' in tasks and define all handlers under 'handlers:'.
+      - For file operations, always use 'backup: true' and set 'mode:' as appropriate.
+      - Never use deprecated syntax (e.g., never use 'include:'). Use 'import_tasks:' or 'include_tasks:' instead.
+      - For shell or command tasks, use 'ansible.builtin.shell' or 'ansible.builtin.command' with proper parameters.
+      - Use idempotent module options wherever possible.
+      - Only output YAML. No markdown, prose, or explanations.
+      - If unsure about a best practice, default to the most current documented approach for Ansible 2.15+.
+    sampling_params:
+      strategy:
+        type: "greedy"
+        temperature: 0.1
+      max_tokens: 2048
+    max_infer_iters: 1
+
+  - name: "validate"
+    agent_pattern: "standard"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    instructions: |
+      You are an Ansible validation expert.
+      Always use the ansible-lint tool (via MCP) when asked to lint a playbook.
+      Do NOT attempt any manual validation—call ONLY the lint tool.
+      Return ONLY the structured output from the tool.
+      Do NOT generate additional summaries, explanations, or inferences after the tool call.
+      Stop as soon as the tool result is available.
+    sampling_params:
+      strategy:
+        type: "greedy"
+      max_tokens: 2048
+    toolgroups:
+      - "mcp::ansible_lint"
+    tool_config:
+      tool_choice: "auto"
+    max_infer_iters: 5
+
+  - name: "ansible_upgrade_analysis"
+    agent_pattern: "react"
+    model: "meta-llama/Llama-3.1-8B-Instruct"
+    tools: []
+    instructions: |
+      You are an expert Ansible automation engineer specializing in upgrade analysis.
+      Use the ReAct pattern: THOUGHT → ACTION → OBSERVATION
+
+      When analyzing Ansible content:
+
+      THOUGHT: Analyze the Ansible content for version indicators, deprecated patterns, and complexity
+      ACTION: Systematically assess upgrade requirements using your Ansible expertise  
+      OBSERVATION: Return complete JSON analysis
+
+      In your OBSERVATION section, return ONLY valid JSON:
+      {
+        "success": true,
+        "analysis_type": "ansible_upgrade_assessment",
+        "current_ansible_version": "estimated_version",
+        "recommended_ansible_version": "2.15",
+        "current_state": {
+          "deprecated_modules": ["modules_needing_fqcn"],
+          "deprecated_syntax": ["syntax_patterns_found"],
+          "has_collections_block": boolean,
+          "complexity_indicators": ["factors"]
+        },
+        "upgrade_requirements": {
+          "fqcn_conversions_needed": ["specific_conversions"],
+          "syntax_modernizations_needed": ["updates"],
+          "collections_to_add": ["required_collections"]
+        },
+        "complexity_assessment": {
+          "level": "LOW|MEDIUM|HIGH",
+          "estimated_effort_hours": number,
+          "risk_level": "LOW|MEDIUM|HIGH"
+        },
+        "recommendations": {
+          "upgrade_priority": "LOW|MEDIUM|HIGH|CRITICAL",
+          "upgrade_approach": "INCREMENTAL|COMPLETE|REWRITE",
+          "key_considerations": ["important_points"]
+        },
+        "detailed_analysis": "Comprehensive technical summary covering purpose, current state, upgrade complexity, and recommendations.",
+        "functionality": {
+          "primary_purpose": "what_this_playbook_does",
+          "services": ["services_managed"],
+          "packages": ["packages_installed"],
+          "files_managed": ["files_managed"]
+        }
+      }
+    sampling_params:
+      strategy:
+        type: "greedy"
+        temperature: 0.1
+      max_tokens: 4096
+    max_infer_iters: 1
+
+# API configuration
+api:
+  title: "Unified Agent API"
+  version: "2.0.0"
+  description: "Unified multi-agent system with schema-driven IaC analysis"
+  
+# CORS configuration
+cors:
+  allow_origins: ["*"]
+  allow_credentials: true
+  allow_methods: ["*"]
+  allow_headers: ["*"]
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

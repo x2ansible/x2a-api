@@ -1,0 +1,23 @@
+# requirements.txt - Enhanced dependencies for production-grade agent system
+
+# Core FastAPI and web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# LlamaStack client
+llama-stack-client
+
+# Enhanced logging and formatting
+rich>=13.0.0
+termcolor>=2.3.0
+
+# Configuration and data handling
+pyyaml>=6.0
+python-multipart
+
+# HTTP client for health checks
+httpx>=0.25.0
+
+# Optional: Additional utilities
+python-dotenv  # For environment variable management
