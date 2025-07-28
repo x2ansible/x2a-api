@@ -144,7 +144,7 @@ def get_llamastack_url_from_config():
         import os
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         
-        from config.config_loader import ConfigLoader
+        from config.config import ConfigLoader
         config_loader = ConfigLoader()
         base_url = config_loader.get_llamastack_base_url()
         if base_url:
@@ -152,8 +152,10 @@ def get_llamastack_url_from_config():
     except:
         pass
     
-    # Fallback URL
-    return "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+    # Fallback to environment variable or default URL
+    import os
+    fallback_url = os.getenv("LLAMASTACK_BASE_URL", "http://lss-ai-agent.apps.cluster-p4mxv.p4mxv.sandbox338.opentlc.com")
+    return fallback_url
 
 def main():
     parser = argparse.ArgumentParser(description="LlamaStack Agent Manager")

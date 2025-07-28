@@ -3,44 +3,22 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: x2a-api-config
-  namespace: x2ansible
+  namespace: x2a
 data:
   config.yaml: |
-    # Chef Analysis Agent Configuration
-    active_profile: "local"
-    defaults:
-      llama_stack:
-        base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-        model: "meta-llama/Llama-3.1-8B-Instruct"
-      agents:
-        chef_analysis:
-          timeout: 120
-          max_tokens: 4096
-    profiles:
-      local:
-        llama_stack:
-          base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-          model: "meta-llama/Llama-3.1-8B-Instruct"
-        agents:
-          chef_analysis:
-            timeout: 90
-            max_tokens: 4096
-      staging:
-        llama_stack:
-          base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-          model: "meta-llama/Llama-3.1-8B-Instruct"
-        agents:
-          chef_analysis:
-            timeout: 120
-            max_tokens: 4096
-      production:
-        llama_stack:
-          base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
-          model: "meta-llama/Llama-3.1-8B-Instruct"
-        agents:
-          chef_analysis:
-            timeout: 180
-            max_tokens: 8192
+    llamastack:
+      base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+      default_model: "meta-llama/Llama-3.1-8B-Instruct"
+
+    file_storage:
+      upload_dir: "/app/uploads"
+      max_file_size: 10485760  # 10MB
+      allowed_extensions: [".rb", ".yml", ".yaml", ".json", ".tf", ".pp", ".erb", ".conf", ".sls", ".py"]
+
+    vector_db:
+      default_db_id: "iac"
+      default_chunk_size: 512
+
     agent_instructions:
       chef_analysis: |
         You are a Chef cookbook analyzer. Analyze the provided Chef cookbook and return JSON analysis.
@@ -103,12 +81,40 @@ data:
         - Be specific about version requirements based on actual code patterns
         - Identify wrapper patterns through include_recipe analysis and attribute override patterns
         - Consider real-world migration complexity in effort estimates
+
+    prompts:
+      chef_analysis_enhanced: |
+        SYSTEM INSTRUCTION:
+        {instruction}
+
+        COOKBOOK CONTEXT:
+        <COOKBOOK>
+        {cookbook_content}
+        </COOKBOOK>
+        <TREE_SITTER_FACTS>
+        {tree_sitter_facts}
+        </TREE_SITTER_FACTS>
+
+        Now, analyze all the facts above and return ONLY a single, valid JSON object that fills EVERY required field as shown in the structure above.
+        **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately.
+
+    agents:
+      - name: "chef_analysis"
+        model: "meta-llama/Llama-3.1-8B-Instruct"
+        instructions: "{agent_instructions.chef_analysis}"
+        sampling_params:
+          strategy:
+            type: "greedy"
+            temperature: 0.1
+          max_tokens: 2048
+          repetition_penalty: 1.0
+        max_infer_iters: 1
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: x2a-api
-  namespace: x2ansible
+  namespace: x2a
 spec:
   replicas: 1
   selector:
@@ -121,7 +127,7 @@ spec:
     spec:
       containers:
         - name: x2a-api
-          image: ghcr.io/x2ansible/x2a-api/x2a-api:latest
+          image: quay.io/rbrhssa/x2a-api:1.0.0
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -129,13 +135,13 @@ spec:
             - name: CONFIG_FILE
               value: "/etc/x2a-api/config.yaml"
             - name: UPLOAD_DIR
-              value: "/tmp/uploads"
+              value: "/app/uploads"
+            - name: LLAMASTACK_BASE_URL
+              value: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
           volumeMounts:
             - name: config-volume
               mountPath: /etc/x2a-api
               readOnly: true
-            - name: uploads
-              mountPath: /tmp/uploads
       volumes:
         - name: config-volume
           configMap:
@@ -143,14 +149,12 @@ spec:
             items:
               - key: config.yaml
                 path: config.yaml
-        - name: uploads
-          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: x2a-api
-  namespace: x2ansible
+  namespace: x2a
 spec:
   selector:
     app: x2a-api
@@ -163,7 +167,13 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: x2a-api
-  namespace: x2ansible
+  namespace: x2a
+  annotations:
+    haproxy.router.openshift.io/timeout: 600s
+    haproxy.router.openshift.io/rate-limit-connections: "true"
+    haproxy.router.openshift.io/rate-limit-http-status: "429"
+    haproxy.router.openshift.io/rate-limit-requests: "100"
+    haproxy.router.openshift.io/rate-limit-period: "1s"
 spec:
   to:
     kind: Service

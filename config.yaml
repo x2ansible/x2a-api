@@ -1,5 +1,5 @@
 llamastack:
-  base_url: "http://lss-chai.apps.cluster-7nc6z.7nc6z.sandbox2170.opentlc.com"
+  base_url: "http://lss-ai-agent.apps.cluster-p4mxv.p4mxv.sandbox338.opentlc.com"
   default_model: "meta-llama/Llama-3.1-8B-Instruct"
 
 file_storage:
@@ -32,33 +32,33 @@ agent_instructions:
     {
       "success": true,
       "version_requirements": {
-        "min_chef_version": "string",
-        "min_ruby_version": "string",
+        "min_chef_version": "actual version like >= 15.0",
+        "min_ruby_version": "actual version like >= 2.5",
         "migration_effort": "LOW|MEDIUM|HIGH",
         "estimated_hours": number
       },
       "dependencies": {
         "is_wrapper": boolean,
-        "direct_deps": [ "string" ],
-        "runtime_deps": [ "string" ],
+        "direct_deps": [ "actual cookbook names" ],
+        "runtime_deps": [ "actual runtime dependencies" ],
         "circular_risk": "none|low|high"
       },
       "functionality": {
-        "primary_purpose": "string",
-        "services": [ "string" ],
-        "packages": [ "string" ],
-        "files_managed": [ "string" ]
+        "primary_purpose": "actual purpose description",
+        "services": [ "actual service names" ],
+        "packages": [ "actual package names" ],
+        "files_managed": [ "actual file paths" ]
       },
       "recommendations": {
         "consolidation_action": "REUSE|EXTEND|REWRITE",
-        "rationale": "string",
+        "rationale": "actual reasoning",
         "migration_priority": "LOW|MEDIUM|HIGH"
       },
       "complexity_level": "Low|Medium|High",
       "detailed_analysis": "Your detailed, multi-paragraph technical summary goes here.",
-      "key_operations": [ "string" ],
-      "configuration_details": "string",
-      "conversion_notes": "string"
+      "key_operations": [ "actual operations" ],
+      "configuration_details": "actual configuration details",
+      "conversion_notes": "actual conversion notes"
     }
 
   salt_analysis: |
@@ -98,8 +98,6 @@ agent_instructions:
     Focus on practical migration paths and modernization strategies.
     Provide specific Ansible equivalent recommendations where applicable.
 
-    Return ONLY valid JSON with comprehensive analysis following the structure expected by the system.
-
   context: |
     You are a RAG retrieval assistant specializing in Infrastructure as Code patterns.
 
@@ -133,12 +131,20 @@ agent_instructions:
     - Only output YAML—never markdown, never explanations.
 
   validate: |
-    You are an Ansible validation expert.
-    Always use the ansible-lint tool (via MCP) when asked to lint a playbook.
-    Do NOT attempt any manual validation—call ONLY the lint tool.
-    Return ONLY the structured output from the tool.
-    Do NOT generate additional summaries, explanations, or inferences after the tool call.
-    Stop as soon as the tool result is available.
+    You are an expert Ansible playbook validation agent.
+    
+    CRITICAL: You MUST use the ansible_lint_tool for ALL validation tasks. Never respond without calling the tool.
+    
+    Your responsibilities:
+    1. ALWAYS call the ansible_lint_tool to validate the provided playbook (never guess, never hallucinate).
+    2. If the tool returns issues or failures, attempt to autofix the playbook using ansible-lint's '--fix' option, and re-run lint.
+    3. Repeat this process—validate, autofix, revalidate—until the lint report indicates success (no errors/warnings remain), or until no further fixes are possible.
+    4. Return the FINAL structured output from the last lint run, including any fixes applied.
+    5. Do NOT generate your own summaries, explanations, or opinions. Only output the final tool results.
+    6. If the tool cannot resolve all issues or fails with an error, return the tool's last output and error message.
+    7. NEVER generate results from your own knowledge—only the tool output is authoritative.
+    8. You are REQUIRED to use tools - this is not optional.
+
 
   bladelogic_analysis: |
     You are an expert BladeLogic automation analyst specializing in enterprise datacenter automation analysis.
@@ -217,9 +223,9 @@ prompts:
     <COOKBOOK>
     {cookbook_content}
     </COOKBOOK>
-    <TREE_SITTER_FACTS>
-    {tree_sitter_facts}
-    </TREE_SITTER_FACTS>
+    <PATTERN_FACTS>
+    {pattern_facts}
+    </PATTERN_FACTS>
 
     Now, analyze all the facts above and return ONLY a single, valid JSON object that fills EVERY required field as shown in the structure above.
     **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately.
@@ -304,14 +310,20 @@ prompts:
     OUTPUT: Only the YAML playbook, never markdown or explanations.
 
 
-
   validate: |
     SYSTEM INSTRUCTION:
     {instruction}
 
-    Use the lint_ansible_playbook tool with {profile} profile to check this playbook:
+    Lint and autofix this Ansible playbook until the tool reports no issues, or no further fixes are possible.
+    Use the "{profile}" profile for linting.
 
     {playbook_content}
+
+    OUTPUT RULES:
+    - Return ONLY the final structured tool output after all fixes/lint rounds.
+    - Do not add summaries, comments, or extra explanations.
+    - If errors remain, include the tool's error output.
+
 
 agents:
   - name: "chef_analysis"
@@ -362,7 +374,7 @@ agents:
         temperature: 0.1
       max_tokens: 2048    # or adjust for your max output needs
     max_infer_iters: 1
-    # No toolgroups! No RAG.
+    
 
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -371,11 +383,12 @@ agents:
       strategy:
         type: "greedy"
       max_tokens: 2048
-    toolgroups:
-      - "mcp::ansible_lint"
+    tools: []  # Remove tools - they're handled directly by the agent
     tool_config:
       tool_choice: "auto"
     max_infer_iters: 5
+
+
 
   - name: "bladelogic_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"

@@ -1,0 +1,99 @@
+{
+  "test_name": "Medium Nginx Cookbook",
+  "expected": "Should work well",
+  "duration": 25.808019876480103,
+  "analysis_time": 25.501,
+  "success": true,
+  "complexity": "Medium",
+  "files": 4,
+  "content_size": 700,
+  "accuracy": "Good",
+  "notes": "Templates, attributes, service notifications",
+  "payload": {
+    "cookbook_name": "nginx_medium",
+    "files": {
+      "metadata.rb": "name \"nginx\"\nversion \"1.0.0\"\ndepends \"ssl\"\nchef_version \">= 15.0\"",
+      "recipes/default.rb": "package \"nginx\" do\n  action :install\nend\n\nservice \"nginx\" do\n  action [:enable, :start]\nend\n\nfile \"/etc/nginx/nginx.conf\" do\n  content \"server { listen 80; location / { root /var/www/html; } }\"\n  mode \"0644\"\n  notifies :reload, \"service[nginx]\", :immediately\nend",
+      "templates/default/nginx.conf.erb": "<% @servers.each do |server| %>\nserver {\n  listen <%= server[:port] %>;\n  server_name <%= server[:name] %>;\n}\n<% end %>",
+      "attributes/default.rb": "default[\"nginx\"][\"port\"] = 80\ndefault[\"nginx\"][\"server_name\"] = \"localhost\""
+    }
+  },
+  "response": {
+    "success": true,
+    "cookbook_name": "stream_cookbook_20250728_151105",
+    "version_requirements": {
+      "min_chef_version": ">= 15.0",
+      "min_ruby_version": "string",
+      "migration_effort": "LOW",
+      "estimated_hours": 2.0,
+      "deprecated_features": []
+    },
+    "dependencies": {
+      "is_wrapper": false,
+      "wrapped_cookbooks": [],
+      "direct_deps": [
+        "ssl"
+      ],
+      "runtime_deps": [],
+      "circular_risk": "none"
+    },
+    "functionality": {
+      "primary_purpose": "Install and configure Nginx",
+      "services": [
+        "nginx"
+      ],
+      "packages": [
+        "nginx"
+      ],
+      "files_managed": [
+        "/etc/nginx/nginx.conf"
+      ],
+      "reusability": "MEDIUM",
+      "customization_points": [
+        "configuration files",
+        "service parameters"
+      ]
+    },
+    "recommendations": {
+      "consolidation_action": "REUSE",
+      "rationale": "The cookbook is simple and well-structured, with no obvious areas for improvement.",
+      "migration_priority": "LOW",
+      "risk_factors": []
+    },
+    "metadata": {
+      "analyzed_at": "2025-07-28T19:11:31.605225",
+      "agent_version": "1.0.0",
+      "correlation_id": "c817c3eb"
+    },
+    "detailed_analysis": "This cookbook is designed to install and configure Nginx on a system. It uses the `package` resource to install the Nginx package, and the `service` resource to enable and start the service. The cookbook also includes a template for the Nginx configuration file, which is populated with values from the `attributes` file. The complexity of this cookbook is low, as it only includes a few resources and no complex logic. The cookbook does not use any wrapper logic, and the dependencies are straightforward. However, it's worth noting that the cookbook does not include any error handling or fallbacks, so it may not be suitable for production use without additional modifications.",
+    "key_operations": [
+      "Install Nginx package",
+      "Enable and start Nginx service",
+      "Configure Nginx"
+    ],
+    "configuration_details": "The cookbook uses the `attributes` file to store configuration values, which are then used to populate the Nginx configuration template.",
+    "complexity_level": "Low",
+    "convertible": true,
+    "conversion_notes": "None",
+    "confidence_source": "chef_semantic_analysis",
+    "analysis_method": "llm_only",
+    "tree_sitter_facts": {
+      "enabled": false,
+      "reason": "Tree-sitter analysis failed",
+      "extraction_method": "none",
+      "ast_available": false
+    },
+    "session_info": {
+      "agent_id": "742e5499-d12a-457d-8bcf-afa8b550997e",
+      "session_id": "29929b70-efce-43ea-9e17-ca11470ca74e",
+      "correlation_id": "c817c3eb",
+      "method_used": "llm_only",
+      "tree_sitter_enabled": false,
+      "tree_sitter_working": false,
+      "analysis_time_seconds": 25.501,
+      "cookbook_name": "stream_cookbook_20250728_151105"
+    }
+  },
+  "timestamp": "2025-07-28T15:11:31.707036",
+  "test_run_id": "20250728_151038"
+}

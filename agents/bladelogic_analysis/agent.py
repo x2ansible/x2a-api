@@ -132,7 +132,7 @@ class BladeLogicAnalysisAgent:
             step_logger.info(f"  ✓ Found operations: {sum(len(ops) for ops in operations.values())} total")
 
             # STEP 3: LLM Analysis with BladeLogic-specific prompt
-            step_logger.info("🧠 STEP 3: LlamaStack agent BladeLogic analysis")
+            step_logger.info(" STEP 3: LlamaStack agent BladeLogic analysis")
             bladelogic_content = self._format_bladelogic_content(object_name, files, object_type, metadata)
             
             llm_analysis = await self._analyze_with_bladelogic_prompt(
@@ -203,7 +203,7 @@ class BladeLogicAnalysisAgent:
     ) -> Dict[str, Any]:
         """Analyze with BladeLogic-specific enhanced prompt"""
         try:
-            step_logger.info(f"[{correlation_id}] 🧠 Creating BladeLogic expert analysis prompt")
+            step_logger.info(f"[{correlation_id}]  Creating BladeLogic expert analysis prompt")
             enhanced_prompt = self._create_bladelogic_analysis_prompt(
                 bladelogic_content, object_type, metadata, operations
             )
@@ -690,7 +690,7 @@ Return only valid JSON with the analysis."""
             yield {
                 "type": "progress", 
                 "status": "analyzing",
-                "message": "🧠 LlamaStack agent performing expert BladeLogic analysis",
+                "message": " LlamaStack agent performing expert BladeLogic analysis",
                 "progress": 0.6,
                 "correlation_id": correlation_id
             }

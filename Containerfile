@@ -17,11 +17,11 @@ RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 # Copy your code
 COPY . .
 
-# Create an uploads dir in /tmp (which is always writable on OpenShift)
-RUN mkdir -p /tmp/uploads
+# Ensure uploads directory exists and is writable (safe if it already exists)
+RUN mkdir -p /app/uploads
 
-# Set environment variables for uploads (if your app needs it)
-ENV UPLOAD_DIR=/tmp/uploads
+# Set environment variables for uploads
+ENV UPLOAD_DIR=/app/uploads
 
 # Expose default port (OpenShift will map as needed)
 EXPOSE 8000

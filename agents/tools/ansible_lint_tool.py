@@ -1,179 +1,200 @@
+"""
+Ansible Lint Tool for LlamaStack Agent Integration
+Validates Ansible playbooks using ansible-lint CLI with structured output
+"""
+
+import subprocess
+import tempfile
+import shutil
+import os
+import json
 import logging
-import requests
-import time
-from typing import Dict
+from typing import Dict, Any, Optional
 
-logger = logging.getLogger("ansible_lint_tool")
+logger = logging.getLogger(__name__)
 
-SERVICE_URL = "https://lint-api-route-convert2ansible.apps.prod.rhoai.rh-aiservices-bu.com/v1/lint"
-VALID_PROFILES = ("basic", "production", "safety", "test", "minimal")
-REQUEST_TIMEOUT = 60
+# Remove the broken decorator and import
 
-def ansible_lint_tool(playbook: str, profile: str = "basic") -> Dict:
+def ansible_lint_tool(playbook: str, lint_profile: str = "basic", correlation_id: str = None) -> Dict[str, Any]:
     """
-    Validate an Ansible playbook using ansible-lint and return lint issues, recommendations, and raw output.
-
-    :param playbook: Ansible playbook YAML content to validate.
-    :param profile: Ansible-lint profile to use. One of: basic, production, safety, test, minimal.
-    :return: Dictionary containing validation status, issues, recommendations, and raw service output.
+    Lint an Ansible playbook using the local ansible-lint CLI.
+    
+    This tool provides comprehensive Ansible playbook validation including:
+    - Syntax and structure validation
+    - Best practice compliance checking
+    - Security and style guideline enforcement
+    - Detailed issue reporting with line numbers
+    - Support for different linting profiles
+    
+    :param playbook: YAML playbook string content
+    :param lint_profile: ansible-lint profile to use (default: basic)
+    :param correlation_id: Optional correlation ID for logging and tracking
+    :return: Structured validation results with issues and recommendations
     """
-    start_time = time.time()
-
-    # Input validation
-    if not isinstance(playbook, str) or not playbook.strip():
-        return _error("Playbook content must be a non-empty string.", code=-10)
-    if len(playbook) > 1024 * 1024:
-        return _error("Playbook content exceeds 1MB.", code=-11)
-    if profile not in VALID_PROFILES:
-        logger.warning(f"Invalid profile '{profile}', defaulting to 'basic'")
-        profile = "basic"
-
     try:
-        url = f"{SERVICE_URL}/{profile}"
-        files = {'file': ('playbook.yml', playbook.encode('utf-8'), 'application/x-yaml')}
-        headers = {
-            "accept": "application/json",
-            "User-Agent": "x2ansible-lint-tool/1.0"
-        }
-        response = requests.post(url, files=files, headers=headers, timeout=REQUEST_TIMEOUT)
-
-        if not response.ok:
-            return _error(
-                f"Lint service returned HTTP {response.status_code}: {response.text[:300]}", 
-                code=response.status_code
-            )
-
-        result = response.json()
-        return _process_lint_result(result, playbook, profile, time.time() - start_time)
-
-    except requests.exceptions.Timeout:
-        return _error("Lint service timed out.", code=408)
-    except Exception as exc:
-        logger.exception(f"Ansible lint tool error: {exc}")
-        return _error(f"Internal error: {exc}")
-
-def _process_lint_result(service_result, playbook, profile, elapsed):
-    exit_code = service_result.get("exit_code", -1)
-    stdout = service_result.get("stdout", "")
-    stderr = service_result.get("stderr", "")
-
-    validation_passed = (exit_code == 0)
-    issues = _parse_issues(stdout, stderr)
-
-    violations = len([i for i in issues if i.get("severity") in ("error", "fatal")])
-    warnings = len([i for i in issues if i.get("severity") == "warning"])
-
-    return {
-        "validation_passed": validation_passed,
-        "exit_code": exit_code,
-        "message": _status_message(validation_passed, len(issues)),
-        "summary": {
-            "passed": validation_passed,
-            "violations": violations,
-            "warnings": warnings,
-            "total_issues": len(issues),
-            "profile_used": profile,
-        },
-        "issues": issues,
-        "recommendations": _recommendations(issues),
-        "raw_output": {
-            "stdout": stdout,
-            "stderr": stderr,
-            "service_result": service_result
-        },
-        "playbook_length": len(playbook),
-        "lint_profile": profile,
-        "processing_time": round(elapsed, 2),
-        "tool_version": "1.0.0",
-        "service_metadata": {
-            "service_url": SERVICE_URL,
-            "profile": profile,
-            "exit_code": exit_code,
-            "timestamp": time.time()
-        }
-    }
-
-def _parse_issues(stdout, stderr):
-    issues = []
-    if not stdout:
-        return issues
-    for line in stdout.splitlines():
-        if not line or ':' not in line or '[' not in line or ']' not in line:
-            continue
+        # Handle string input (convert from JSON string if needed)
+        if isinstance(playbook, str):
+            playbook_content = playbook.strip()
+        else:
+            logger.error(f"[{correlation_id}] Playbook parameter is not a string: {type(playbook)}")
+            return _create_empty_validation_structure()
+        
+        tmpdir = tempfile.mkdtemp()
+        playbook_path = os.path.join(tmpdir, "playbook.yml")
+        
         try:
-            parts = line.split(':', 2)
-            if len(parts) < 3:
-                continue
-            filename, line_num, rest = parts
-            rule_start = rest.find('[')
-            rule_end = rest.find(']')
-            rule = rest[rule_start+1:rule_end]
-            description = rest[rule_end+1:].strip()
-            issues.append({
-                "rule": rule,
-                "description": description,
-                "filename": filename.strip(),
-                "line": int(line_num.strip()) if line_num.strip().isdigit() else None,
-                "severity": _severity(rule, description),
-                "raw_line": line,
-            })
+            with open(playbook_path, "w", encoding="utf-8") as f:
+                f.write(playbook_content)
         except Exception as e:
-            logger.debug(f"Could not parse issue line: {line}: {e}")
-    if stderr and stderr.strip():
-        issues.append({
-            "rule": "stderr",
-            "description": stderr.strip(),
-            "severity": "error",
-            "raw_line": stderr
-        })
-    return issues
+            logger.error(f"[{correlation_id}] Failed to write playbook to temp file: {e}")
+            return _create_empty_validation_structure()
+        
+        logger.info(f"[{correlation_id}] Starting ansible-lint analysis with profile: {lint_profile}")
+        
+        cmd = [
+            "ansible-lint",
+            "--nocolor",
+            "--offline",              # Do not fetch requirements for faster, safer runs
+            "--format", "sarif",      # SARIF output for robust parsing
+            "--profile", lint_profile,
+            playbook_path
+        ]
+        
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        exit_code = proc.returncode
 
-def _severity(rule, description):
-    rule = rule.lower()
-    desc = description.lower()
-    if any(x in rule for x in ("error", "fatal", "syntax")): return "error"
-    if any(x in desc for x in ("deprecated", "warning", "should")): return "warning"
-    return "warning"
+        # Parse SARIF results
+        issues = []
+        try:
+            sarif = json.loads(proc.stdout)
+            if "runs" in sarif and sarif["runs"]:
+                for iss in sarif["runs"][0].get("results", []):
+                    msg = iss.get("message", {}).get("text", "")
+                    rule_id = iss.get("ruleId")
+                    locations = iss.get("locations", [{}])[0].get("physicalLocation", {})
+                    file_path = locations.get("artifactLocation", {}).get("uri", "playbook.yml")
+                    region = locations.get("region", {})
+                    start_line = region.get("startLine")
+                    severity = iss.get("level", "warning")
+                    issues.append({
+                        "rule": rule_id,
+                        "description": msg,
+                        "filename": file_path,
+                        "line": start_line,
+                        "severity": severity,
+                        "raw": iss
+                    })
+        except Exception as e:
+            logger.warning(f"[{correlation_id}] Failed to parse SARIF output: {e}")
+            issues = [{
+                "rule": "sarif-parse-error",
+                "description": f"Failed to parse SARIF output: {e}",
+                "filename": "playbook.yml",
+                "severity": "fatal"
+            }]
 
-def _recommendations(issues):
-    # Group issues by rule for simple recs
-    recs = []
-    if not issues:
-        return recs
-    rule_counts = {}
-    for issue in issues:
-        rule = issue.get("rule")
-        rule_counts[rule] = rule_counts.get(rule, 0) + 1
-    for rule, count in rule_counts.items():
-        recs.append({
-            "rule": rule,
-            "count": count,
-            "recommendation": f"Fix {count} instance(s) of '{rule}'",
-        })
-    return recs
+        validation_passed = (exit_code == 0) and not issues
 
-def _status_message(validation_passed, n_issues):
-    if validation_passed:
-        return "Playbook validation passed"
-    else:
-        return f"Playbook validation failed with {n_issues} issue(s)"
+        summary = {
+            "passed": validation_passed,
+            "violations": sum(1 for i in issues if i["severity"] in ("error", "fatal")),
+            "warnings": sum(1 for i in issues if i["severity"] == "warning"),
+            "total_issues": len(issues)
+        }
 
-def _error(message, code=-1):
+        recommendations = [
+            {"issue": i["rule"], "recommendation": f"Review and resolve: {i['rule']}"} for i in issues
+        ]
+
+        logger.info(f"[{correlation_id}] ansible-lint analysis completed")
+        logger.info(f"[{correlation_id}] Found {len(issues)} issues, validation passed: {validation_passed}")
+
+        return {
+            "validation_passed": validation_passed,
+            "exit_code": exit_code,
+            "message": (
+                "Playbook passed all lint checks."
+                if validation_passed else
+                f"Playbook failed lint checks ({len(issues)} issues)."
+            ),
+            "summary": summary,
+            "issues": issues,
+            "recommendations": recommendations,
+            "raw_output": {
+                "cmd": " ".join(cmd),
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        }
+        
+    except subprocess.TimeoutExpired:
+        logger.error(f"[{correlation_id}] ansible-lint timed out")
+        return {
+            "validation_passed": False,
+            "exit_code": -3,
+            "message": "ansible-lint timed out.",
+            "summary": {
+                "passed": False,
+                "violations": 1,
+                "warnings": 0,
+                "total_issues": 1,
+                "error": True
+            },
+            "issues": [{
+                "rule": "tool-timeout",
+                "description": "ansible-lint timed out",
+                "filename": "playbook.yml",
+                "severity": "fatal"
+            }],
+            "recommendations": [],
+            "raw_output": {},
+        }
+    except Exception as e:
+        logger.error(f"[{correlation_id}] ansible-lint error: {e}")
+        return {
+            "validation_passed": False,
+            "exit_code": -4,
+            "message": f"ansible-lint error: {e}",
+            "summary": {
+                "passed": False,
+                "violations": 1,
+                "warnings": 0,
+                "total_issues": 1,
+                "error": True
+            },
+            "issues": [{
+                "rule": "tool-exception",
+                "description": f"ansible-lint error: {e}",
+                "filename": "playbook.yml",
+                "severity": "fatal"
+            }],
+            "recommendations": [],
+            "raw_output": {},
+        }
+    finally:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception as e:
+            logger.warning(f"[{correlation_id}] Failed to cleanup temp directory: {e}")
+
+def _create_empty_validation_structure() -> Dict[str, Any]:
+    """Create empty validation structure when ansible-lint analysis fails."""
     return {
         "validation_passed": False,
-        "exit_code": code,
-        "message": message,
+        "exit_code": -1,
+        "message": "ansible-lint analysis failed",
         "summary": {
             "passed": False,
             "violations": 1,
             "warnings": 0,
             "total_issues": 1,
-            "error": True,
+            "error": True
         },
         "issues": [{
-            "rule": "error",
-            "description": message,
-            "severity": "error",
+            "rule": "tool-failure",
+            "description": "ansible-lint tool failed to execute",
+            "filename": "playbook.yml",
+            "severity": "fatal"
         }],
         "recommendations": [],
         "raw_output": {},

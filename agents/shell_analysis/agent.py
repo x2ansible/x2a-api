@@ -85,7 +85,7 @@ class ShellAnalysisAgent:
             shell_content = self._format_shell_content(script_name, files)
             
             # Use config-driven prompt
-            self.logger.info("🧠 Using config-driven prompt for shell analysis")
+            self.logger.info(" Using config-driven prompt for shell analysis")
             result = await self._analyze_with_config_prompt(shell_content, correlation_id, analysis_session_id)
 
             if not result:
@@ -305,7 +305,7 @@ Provide a comprehensive analysis following your instructions."""
             yield {
                 "type": "progress",
                 "status": "analyzing",
-                "message": "🧠 Using config-driven analysis",
+                "message": " Using config-driven analysis",
                 "progress": 0.5,
                 "correlation_id": correlation_id,
             }

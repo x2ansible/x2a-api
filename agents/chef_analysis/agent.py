@@ -11,13 +11,13 @@ from agents.chef_analysis.utils import create_correlation_id
 from agents.chef_analysis.processor import extract_and_validate_analysis
 from shared.exceptions import CookbookAnalysisError
 from shared.log_utils import create_chef_logger, ChefAnalysisLogger
-from shared.tree_sitter_analyzer import TreeSitterAnalyzer
+from shared.pattern_analyzer import PatternAnalyzer
 
 logger = logging.getLogger(__name__)
 
 class ChefAnalysisAgent:
     """
-    ChefAnalysisAgent: all instructions/prompt templates are from config (no hardcoding).
+    Analyze Chef cookbooks using pattern-based extraction and LLM analysis.
     """
 
     def __init__(
@@ -37,20 +37,12 @@ class ChefAnalysisAgent:
         self.instruction = instruction
         self.enhanced_prompt_template = enhanced_prompt_template
 
-        try:
-            self.tree_sitter = TreeSitterAnalyzer()
-            self.tree_sitter_enabled = self.tree_sitter.is_enabled()
-            if self.tree_sitter_enabled:
-                self.logger.info("🌳 Tree-sitter integration enabled - providing verified structural facts")
-            else:
-                self.logger.warning("⚠️ Tree-sitter disabled - using LLM-only analysis")
-        except Exception as e:
-            self.tree_sitter = None
-            self.tree_sitter_enabled = False
-            self.logger.warning(f"⚠️ Tree-sitter initialization failed: {e}")
-            self.logger.info("📝 Continuing with standard LLM-only analysis")
+        # Initialize pattern analyzer
+        self.pattern_analyzer = PatternAnalyzer()
+        self.pattern_analyzer_enabled = self.pattern_analyzer.is_enabled()
+        self.logger.info("Pattern-based extraction initialized")
 
-        self.logger.info(f"🍳 ChefAnalysisAgent initialized - agent_id: {agent_id}, session_id: {session_id}")
+        self.logger.info(f"ChefAnalysisAgent initialized - agent_id: {agent_id}, session_id: {session_id}")
 
     def create_new_session(self, correlation_id: str) -> str:
         try:
@@ -60,11 +52,11 @@ class ChefAnalysisAgent:
                 session_name=session_name,
             )
             session_id = response.session_id
-            self.logger.info(f"📱 Created session: {session_id} for correlation: {correlation_id}")
+            self.logger.info(f"Created session: {session_id} for correlation: {correlation_id}")
             return session_id
         except Exception as e:
-            self.logger.error(f" Failed to create session: {e}")
-            self.logger.info(f"↩️ Falling back to default session: {self.session_id}")
+            self.logger.error(f"Failed to create session: {e}")
+            self.logger.info(f"Falling back to default session: {self.session_id}")
             return self.session_id
 
     async def analyze_cookbook(
@@ -80,13 +72,18 @@ class ChefAnalysisAgent:
         files = cookbook_data.get("files", {})
 
         # --- LOG ALL FILES RECEIVED ---
-        step_logger.info(f"📂 Files received for analysis ({len(files)}): {list(files.keys())}")
+        step_logger.info(f"Files received for analysis ({len(files)}): {list(files.keys())}")
         for fname, content in files.items():
             preview = content[:120].replace("\n", " ") + ("..." if len(content) > 120 else "")
             step_logger.info(f"  └── {fname} ({len(content)} chars): {preview}")
 
         step_logger.log_cookbook_analysis_start(cookbook_name, len(files))
-        step_logger.info(f"🔄 Starting {'Tree-sitter + LLM' if self.tree_sitter_enabled else 'LLM-only'} analysis")
+        
+        # Honest reporting of analysis method
+        if self.pattern_analyzer_enabled:
+            step_logger.info("Starting Pattern-based + LLM analysis")
+        else:
+            step_logger.info("Starting LLM-only analysis")
 
         try:
             if not files:
@@ -94,24 +91,24 @@ class ChefAnalysisAgent:
 
             analysis_session_id = self.create_new_session(correlation_id)
 
-            if self.tree_sitter_enabled:
-                step_logger.info("🌳 STEP 2: Extracting verified structural facts with Tree-sitter")
-                tree_sitter_facts = self._extract_verified_facts(files, step_logger, correlation_id)
-                step_logger.info(" Tree-sitter analysis completed - facts verified")
+            if self.pattern_analyzer_enabled:
+                step_logger.info("STEP 2: Extracting structural facts with Pattern-based analyzer")
+                pattern_facts = self._extract_verified_facts(files, step_logger, correlation_id)
+                step_logger.info("Pattern-based analysis completed")
             else:
-                step_logger.info("⚠️ STEP 2: Tree-sitter disabled - skipping structural analysis")
-                tree_sitter_facts = self._create_empty_facts_structure()
+                step_logger.info("STEP 2: Extracting structural facts with pattern matching")
+                pattern_facts = self._create_empty_facts_structure()
 
-            step_logger.info("🧠 STEP 3: LlamaStack agent intelligent analysis")
+            step_logger.info("STEP 3: LlamaStack agent intelligent analysis")
             cookbook_content = self._format_cookbook_content(cookbook_name, files)
             
             llm_analysis = await self._analyze_with_enhanced_prompt(
-                cookbook_content, tree_sitter_facts, correlation_id, step_logger, analysis_session_id
+                cookbook_content, pattern_facts, correlation_id, step_logger, analysis_session_id
             )
 
-            step_logger.info("🔄 STEP 4: Merging verified facts with LLM analysis")
+            step_logger.info("STEP 4: Merging extracted facts with LLM analysis")
             final_result = self._merge_analysis_results(
-                tree_sitter_facts, llm_analysis, cookbook_name, correlation_id, step_logger
+                pattern_facts, llm_analysis, cookbook_name, correlation_id, step_logger
             )
 
             total_time = time.time() - start_time
@@ -121,22 +118,23 @@ class ChefAnalysisAgent:
                 "agent_id": self.agent_id,
                 "session_id": analysis_session_id,
                 "correlation_id": correlation_id,
-                "method_used": "tree_sitter_llm" if self.tree_sitter_enabled else "llm_only",
-                "tree_sitter_enabled": self.tree_sitter_enabled,
+                "method_used": "pattern_llm" if self.pattern_analyzer_enabled else "llm_only",
+                "pattern_analyzer_enabled": self.pattern_analyzer_enabled,
+                "pattern_analyzer_working": self.pattern_analyzer.is_enabled(),
                 "analysis_time_seconds": round(total_time, 3)
             }
             
-            step_logger.info(f" Analysis completed successfully in {total_time:.3f}s")
+            step_logger.info(f"Analysis completed successfully in {total_time:.3f}s")
             return final_result
 
         except Exception as e:
             total_time = time.time() - start_time
-            step_logger.error(f" Analysis failed after {total_time:.3f}s: {str(e)}")
-            step_logger.warning("🔄 Attempting fallback to standard LLM-only analysis")
+            step_logger.error(f"Analysis failed after {total_time:.3f}s: {str(e)}")
+            step_logger.warning("Attempting fallback to standard LLM-only analysis")
             try:
                 return await self._fallback_to_standard_analysis(cookbook_data, correlation_id)
             except Exception as fallback_error:
-                step_logger.error(f" Fallback analysis also failed: {fallback_error}")
+                step_logger.error(f"Fallback analysis also failed: {fallback_error}")
                 raise CookbookAnalysisError(f"Analysis failed: {str(e)}")
 
     def _extract_verified_facts(
@@ -145,9 +143,9 @@ class ChefAnalysisAgent:
         step_logger: ChefAnalysisLogger, 
         correlation_id: str
     ) -> Dict[str, Any]:
-        step_logger.info(f"[{correlation_id}] 🌳 Tree-sitter analyzing {len(files)} cookbook files")
+        step_logger.info(f"[{correlation_id}] Pattern-based analyzing {len(files)} cookbook files")
         try:
-            chef_facts = self.tree_sitter.extract_chef_facts(files)
+            chef_facts = self.pattern_analyzer.extract_chef_facts(files)
             total_resources = sum(len(resources) for resources in chef_facts['resources'].values())
             valid_files = sum(1 for v in chef_facts['syntax_validation'].values() if v.get('valid', False))
             total_files = len(chef_facts['syntax_validation'])
@@ -158,20 +156,24 @@ class ChefAnalysisAgent:
                 'total_resources': total_resources,
                 'has_metadata': bool(chef_facts['metadata']),
                 'is_wrapper': len(chef_facts['dependencies']['include_recipes']) > 0,
-                'complexity_score': self._calculate_complexity_score(chef_facts)
+                'complexity_score': self._calculate_complexity_score(chef_facts),
+                'extraction_method': chef_facts.get('extraction_method', 'unknown'),
+                'ast_available': chef_facts.get('summary', {}).get('ast_available', False)
             }
-            step_logger.info(f"[{correlation_id}]  Tree-sitter extraction complete:")
-            step_logger.info(f"[{correlation_id}]   📦 {len(chef_facts['resources']['packages'])} packages")
-            step_logger.info(f"[{correlation_id}]   🔧 {len(chef_facts['resources']['services'])} services")
-            step_logger.info(f"[{correlation_id}]   📁 {len(chef_facts['resources']['files'])} files")
-            step_logger.info(f"[{correlation_id}]   📋 {len(chef_facts['resources']['templates'])} templates")
-            step_logger.info(f"[{correlation_id}]   🔗 {len(chef_facts['dependencies']['include_recipes'])} recipe deps")
-            step_logger.info(f"[{correlation_id}]   📊 Wrapper cookbook: {chef_facts['summary']['is_wrapper']}")
-            step_logger.info(f"[{correlation_id}]   🎯 Complexity score: {chef_facts['summary']['complexity_score']}")
+            step_logger.info(f"[{correlation_id}] Extraction complete:")
+            step_logger.info(f"[{correlation_id}]   Packages: {len(chef_facts['resources']['packages'])}")
+            step_logger.info(f"[{correlation_id}]   Services: {len(chef_facts['resources']['services'])}")
+            step_logger.info(f"[{correlation_id}]   Files: {len(chef_facts['resources']['files'])}")
+            step_logger.info(f"[{correlation_id}]   Templates: {len(chef_facts['resources']['templates'])}")
+            step_logger.info(f"[{correlation_id}]   Recipe deps: {len(chef_facts['dependencies']['include_recipes'])}")
+            step_logger.info(f"[{correlation_id}]   Wrapper cookbook: {chef_facts['summary']['is_wrapper']}")
+            step_logger.info(f"[{correlation_id}]   Complexity score: {chef_facts['summary']['complexity_score']}")
+            step_logger.info(f"[{correlation_id}]   Extraction method: {chef_facts['summary']['extraction_method']}")
+            step_logger.info(f"[{correlation_id}]   AST available: {chef_facts['summary']['ast_available']}")
             return chef_facts
         except Exception as e:
-            step_logger.warning(f"[{correlation_id}] ⚠️ Tree-sitter extraction failed: {e}")
-            step_logger.info(f"[{correlation_id}] 🔄 Returning empty facts structure for fallback")
+            step_logger.warning(f"[{correlation_id}] Pattern-based extraction failed: {e}")
+            step_logger.info(f"[{correlation_id}] Returning empty facts structure for fallback")
             return self._create_empty_facts_structure()
 
     def _calculate_complexity_score(self, chef_facts: Dict[str, Any]) -> int:
@@ -214,38 +216,38 @@ class ChefAnalysisAgent:
                 'is_wrapper': False,
                 'complexity_score': 0
             },
-            'tree_sitter_enabled': False
+            'pattern_analyzer_enabled': False
         }
 
     async def _analyze_with_enhanced_prompt(
         self, 
         cookbook_content: str,
-        tree_sitter_facts: Dict[str, Any],
+        pattern_facts: Dict[str, Any],
         correlation_id: str, 
         step_logger: ChefAnalysisLogger, 
         session_id: str
     ) -> Dict[str, Any]:
         try:
-            step_logger.info(f"[{correlation_id}] 🧠 Creating enhanced prompt from config")
-            enhanced_prompt = self._create_enhanced_analysis_prompt(cookbook_content, tree_sitter_facts)
-            step_logger.info(f"[{correlation_id}] 📝 Using enhanced prompt (from YAML config)")
+            step_logger.info(f"[{correlation_id}] Creating enhanced prompt from config")
+            enhanced_prompt = self._create_enhanced_analysis_prompt(cookbook_content, pattern_facts)
+            step_logger.info(f"[{correlation_id}] Using enhanced prompt (from YAML config)")
             result = await self._analyze_direct(enhanced_prompt, correlation_id, step_logger, session_id)
             if result and result.get("success") and not result.get("postprocess_error"):
-                step_logger.info(f"[{correlation_id}]  LlamaStack agent analysis succeeded")
+                step_logger.info(f"[{correlation_id}] LlamaStack agent analysis succeeded")
                 return result
             else:
-                step_logger.warning(f"[{correlation_id}] ⚠️ LlamaStack agent analysis had issues: {result}")
+                step_logger.warning(f"[{correlation_id}] LlamaStack agent analysis had issues: {result}")
         except Exception as e:
-            step_logger.warning(f"[{correlation_id}] ⚠️ LlamaStack agent analysis failed: {e}")
-        step_logger.warning(f"[{correlation_id}] 🔄 Creating intelligent fallback from verified facts")
-        return self._create_intelligent_fallback_from_facts(tree_sitter_facts, correlation_id, cookbook_content)
+            step_logger.warning(f"[{correlation_id}] LlamaStack agent analysis failed: {e}")
+        step_logger.warning(f"[{correlation_id}] Creating intelligent fallback from extracted facts")
+        return self._create_intelligent_fallback_from_facts(pattern_facts, correlation_id, cookbook_content)
 
-    def _create_enhanced_analysis_prompt(self, cookbook_content: str, tree_sitter_facts: Dict[str, Any]) -> str:
-        facts_str = json.dumps(tree_sitter_facts, indent=2)
+    def _create_enhanced_analysis_prompt(self, cookbook_content: str, pattern_facts: Dict[str, Any]) -> str:
+        facts_str = json.dumps(pattern_facts, indent=2)
         return self.enhanced_prompt_template.format(
             instruction=self.instruction,
             cookbook_content=cookbook_content,
-            tree_sitter_facts=facts_str
+            pattern_facts=facts_str
         )
 
     async def _analyze_direct(
@@ -274,69 +276,84 @@ class ChefAnalysisAgent:
                 step_logger.error("No turn completed in LlamaStack response")
                 return None
             raw_response = turn.output_message.content
-            step_logger.info(f"📥 Received LlamaStack response: {len(raw_response)} chars")
+            step_logger.info(f"Received LlamaStack response: {len(raw_response)} chars")
             result = extract_and_validate_analysis(raw_response, correlation_id, prompt[:500])
-            step_logger.info(f"🔍 Processor result: success={result.get('success')}")
+            step_logger.info(f"Processor result: success={result.get('success')}")
             return result
         except Exception as e:
-            step_logger.error(f" LlamaStack analysis failed: {e}")
+            step_logger.error(f"LlamaStack analysis failed: {e}")
             return None
 
     def _merge_analysis_results(
         self,
-        tree_sitter_facts: Dict[str, Any],
+        pattern_facts: Dict[str, Any],
         llm_analysis: Dict[str, Any],
         cookbook_name: str,
         correlation_id: str,
         step_logger: ChefAnalysisLogger
     ) -> Dict[str, Any]:
-        step_logger.info(f"[{correlation_id}] 🔄 Merging verified facts with LLM analysis")
+        step_logger.info(f"[{correlation_id}] Merging extracted facts with LLM analysis")
         merged_result = llm_analysis.copy() if llm_analysis else {}
         merged_result["success"] = True
         merged_result["cookbook_name"] = cookbook_name
-        merged_result["analysis_method"] = "tree_sitter_llm" if tree_sitter_facts.get('tree_sitter_enabled', False) else "llm_only"
-        if tree_sitter_facts.get('tree_sitter_enabled', False):
-            step_logger.info(f"[{correlation_id}] 🌳 Applying verified Tree-sitter facts (take precedence)")
+        
+        # Honest reporting of analysis method
+        if pattern_facts.get('pattern_analyzer_enabled', False):
+            merged_result["analysis_method"] = "pattern_llm"
+            step_logger.info(f"[{correlation_id}] Applying Pattern-based facts (take precedence)")
+        else:
+            merged_result["analysis_method"] = "llm_only"
+            step_logger.info(f"[{correlation_id}] Using LLM analysis only")
+            
+        if pattern_facts.get('pattern_analyzer_enabled', False):
             if "functionality" not in merged_result:
                 merged_result["functionality"] = {}
-            merged_result["functionality"]["services"] = tree_sitter_facts["resources"]["services"]
-            merged_result["functionality"]["packages"] = tree_sitter_facts["resources"]["packages"]
-            merged_result["functionality"]["files_managed"] = tree_sitter_facts["resources"]["files"][:10]
+            merged_result["functionality"]["services"] = pattern_facts["resources"]["services"]
+            merged_result["functionality"]["packages"] = pattern_facts["resources"]["packages"]
+            merged_result["functionality"]["files_managed"] = pattern_facts["resources"]["files"][:10]
             if "dependencies" not in merged_result:
                 merged_result["dependencies"] = {}
-            merged_result["dependencies"]["is_wrapper"] = tree_sitter_facts["summary"]["is_wrapper"]
-            merged_result["dependencies"]["direct_deps"] = tree_sitter_facts["dependencies"]["cookbook_deps"]
-            merged_result["dependencies"]["wrapped_cookbooks"] = tree_sitter_facts["dependencies"]["include_recipes"]
-            merged_result["tree_sitter_facts"] = {
-                "complexity_score": tree_sitter_facts["summary"]["complexity_score"],
-                "syntax_success_rate": tree_sitter_facts["summary"]["syntax_success_rate"],
-                "total_resources": tree_sitter_facts["summary"]["total_resources"],
-                "verified_cookbook_name": tree_sitter_facts["metadata"].get("name", "unknown"),
-                "verified_version": tree_sitter_facts["metadata"].get("version", "unknown"),
-                "has_metadata": tree_sitter_facts["summary"]["has_metadata"]
+            merged_result["dependencies"]["is_wrapper"] = pattern_facts["summary"]["is_wrapper"]
+            merged_result["dependencies"]["direct_deps"] = pattern_facts["dependencies"]["cookbook_deps"]
+            merged_result["dependencies"]["wrapped_cookbooks"] = pattern_facts["dependencies"]["include_recipes"]
+            merged_result["pattern_analyzer_facts"] = {
+                "complexity_score": pattern_facts["summary"]["complexity_score"],
+                "syntax_success_rate": pattern_facts["summary"]["syntax_success_rate"],
+                "total_resources": pattern_facts["summary"]["total_resources"],
+                "extracted_cookbook_name": pattern_facts["metadata"].get("name", "unknown"),
+                "extracted_version": pattern_facts["metadata"].get("version", "unknown"),
+                "has_metadata": pattern_facts["summary"]["has_metadata"],
+                "extraction_method": pattern_facts["summary"]["extraction_method"],
+                "ast_available": pattern_facts["summary"]["ast_available"],
+                "pattern_fallback_used": pattern_facts["summary"].get("pattern_fallback_used", False)
             }
-            step_logger.info(f"[{correlation_id}]  Merged {tree_sitter_facts['summary']['total_resources']} verified resources")
+            step_logger.info(f"[{correlation_id}] Merged {pattern_facts['summary']['total_resources']} resources using {pattern_facts['summary']['extraction_method']} method")
         else:
-            step_logger.warning(f"[{correlation_id}] ⚠️ Tree-sitter facts unavailable, using LLM analysis only")
-            merged_result["tree_sitter_facts"] = {"enabled": False, "reason": "Tree-sitter analysis failed"}
-        step_logger.info(f"[{correlation_id}]  Analysis merge completed successfully")
+            step_logger.warning(f"[{correlation_id}] Pattern-based facts unavailable, using LLM analysis only")
+            merged_result["pattern_analyzer_facts"] = {
+                "enabled": False, 
+                "reason": "Pattern-based analysis failed",
+                "extraction_method": "none",
+                "ast_available": False
+            }
+        step_logger.info(f"[{correlation_id}] Analysis merge completed successfully")
         return merged_result
 
     def _create_intelligent_fallback_from_facts(
         self,
-        tree_sitter_facts: Dict[str, Any],
+        pattern_facts: Dict[str, Any],
         correlation_id: str,
         cookbook_content: str
     ) -> Dict[str, Any]:
-        self.logger.info(f"[{correlation_id}] 🔄 Creating intelligent fallback analysis")
-        if not tree_sitter_facts.get('tree_sitter_enabled', False):
-            self.logger.warning(f"[{correlation_id}] ⚠️ No Tree-sitter facts available - using standard fallback")
+        self.logger.info(f"[{correlation_id}] Creating intelligent fallback analysis")
+        if not pattern_facts.get('pattern_analyzer_enabled', False):
+            self.logger.warning(f"[{correlation_id}] No Pattern-based facts available - using standard fallback")
             return extract_and_validate_analysis("{}", correlation_id, cookbook_content)
-        summary = tree_sitter_facts['summary']
-        resources = tree_sitter_facts['resources']
-        deps = tree_sitter_facts['dependencies']
-        metadata = tree_sitter_facts['metadata']
-        self.logger.info(f"[{correlation_id}] 🌳 Creating fallback from {summary['total_resources']} verified resources")
+        summary = pattern_facts['summary']
+        resources = pattern_facts['resources']
+        deps = pattern_facts['dependencies']
+        metadata = pattern_facts['metadata']
+        self.logger.info(f"[{correlation_id}] Creating fallback from {summary['total_resources']} extracted resources")
         complexity_score = summary['complexity_score']
         if complexity_score <= 10:
             migration_effort = "LOW"
@@ -360,7 +377,7 @@ class ChefAnalysisAgent:
         fallback_analysis = {
             "success": True,
             "cookbook_name": metadata.get('name', 'unknown'),
-            "analysis_method": "tree_sitter_fallback",
+            "analysis_method": "pattern_fallback",
             "version_requirements": {
                 "min_chef_version": "14.0",
                 "min_ruby_version": "2.5",
@@ -385,7 +402,7 @@ class ChefAnalysisAgent:
             },
             "recommendations": {
                 "consolidation_action": "EXTEND" if summary['is_wrapper'] else "REUSE",
-                "rationale": f"Tree-sitter analysis shows {summary['total_resources']} verified resources with {migration_effort.lower()} complexity",
+                "rationale": f"Pattern-based analysis shows {summary['total_resources']} extracted resources with {migration_effort.lower()} complexity",
                 "migration_priority": "HIGH" if complexity_score > 25 else "MEDIUM" if complexity_score > 10 else "LOW",
                 "risk_factors": (["Wrapper cookbook dependencies"] if summary['is_wrapper'] else []) +
                               (["High resource complexity"] if complexity_score > 25 else []),
@@ -396,17 +413,17 @@ class ChefAnalysisAgent:
                     "Test and validate converted infrastructure"
                 ]
             },
-            "tree_sitter_facts": {
+            "pattern_analyzer_facts": {
                 "complexity_score": complexity_score,
                 "syntax_success_rate": summary['syntax_success_rate'],
                 "total_resources": summary['total_resources'],
-                "fallback_reason": "LLM analysis failed, using Tree-sitter facts"
+                "fallback_reason": "LLM analysis failed, using extracted facts"
             }
         }
         fallback_analysis["recommendations"]["migration_steps"] = [
             step for step in fallback_analysis["recommendations"]["migration_steps"] if step
         ]
-        self.logger.info(f"[{correlation_id}]  Intelligent fallback created from verified Tree-sitter facts")
+        self.logger.info(f"[{correlation_id}] Intelligent fallback created from extracted facts")
         return fallback_analysis
 
     async def _fallback_to_standard_analysis(
@@ -414,7 +431,7 @@ class ChefAnalysisAgent:
         cookbook_data: Dict[str, Any],
         correlation_id: str
     ) -> Dict[str, Any]:
-        self.logger.warning(f"[{correlation_id}] 🔄 Executing standard LLM-only fallback")
+        self.logger.warning(f"[{correlation_id}] Executing standard LLM-only fallback")
         cookbook_name = cookbook_data.get("name", "unknown")
         files = cookbook_data.get("files", {})
         cookbook_content = self._format_cookbook_content(cookbook_name, files)
@@ -424,10 +441,10 @@ class ChefAnalysisAgent:
             )
             if isinstance(result, dict):
                 result["analysis_method"] = "standard_fallback"
-                result["tree_sitter_facts"] = {"enabled": False, "reason": "Complete fallback to LLM-only"}
+                result["pattern_analyzer_facts"] = {"enabled": False, "reason": "Complete fallback to LLM-only"}
             return result
         except Exception as e:
-            self.logger.error(f"[{correlation_id}]  Standard fallback also failed: {e}")
+            self.logger.error(f"[{correlation_id}] Standard fallback also failed: {e}")
             return extract_and_validate_analysis("{}", correlation_id, cookbook_content)
 
     async def _analyze_with_retries(
@@ -438,16 +455,16 @@ class ChefAnalysisAgent:
         session_id: str
     ) -> Dict[str, Any]:
         try:
-            logger.info("🔄 Starting standard LLM analysis")
+            logger.info("Starting standard LLM analysis")
             result = await self._analyze_direct(cookbook_content, correlation_id, logger, session_id)
             if result and result.get("success") and not result.get("postprocess_error"):
-                logger.info(" Standard analysis succeeded")
+                logger.info("Standard analysis succeeded")
                 return result
             else:
-                logger.warning(f"⚠️ Standard analysis failed: {result}")
+                logger.warning(f"Standard analysis failed: {result}")
         except Exception as e:
-            logger.warning(f"⚠️ Standard analysis failed with exception: {e}")
-        logger.warning("⚠️ LLM analysis failed - processor will handle intelligent fallback")
+            logger.warning(f"Standard analysis failed with exception: {e}")
+        logger.warning("LLM analysis failed - processor will handle intelligent fallback")
         return extract_and_validate_analysis("{}", correlation_id, cookbook_content)
 
     async def analyze_cookbook_stream(
@@ -461,21 +478,21 @@ class ChefAnalysisAgent:
             yield {
                 "type": "progress",
                 "status": "starting",
-                "message": "🍳 Chef cookbook analysis started",
+                "message": "Chef cookbook analysis started",
                 "correlation_id": correlation_id
             }
-            if self.tree_sitter_enabled:
+            if self.pattern_analyzer_enabled:
                 yield {
                     "type": "progress",
                     "status": "extracting",
-                    "message": "🌳 Extracting verified structural facts",
+                    "message": "Extracting structural facts",
                     "progress": 0.3,
                     "correlation_id": correlation_id
                 }
             yield {
                 "type": "progress", 
                 "status": "processing",
-                "message": "🧠 LlamaStack agent analyzing cookbook",
+                "message": "LlamaStack agent analyzing cookbook",
                 "progress": 0.7,
                 "correlation_id": correlation_id
             }
@@ -517,39 +534,39 @@ class ChefAnalysisAgent:
             return False
 
     def get_status(self) -> Dict[str, Any]:
-        tree_sitter_status = {}
-        if self.tree_sitter:
-            tree_sitter_status = self.tree_sitter.get_status()
+        pattern_analyzer_status = {}
+        if self.pattern_analyzer:
+            pattern_analyzer_status = self.pattern_analyzer.get_status()
         return {
             "agent_id": self.agent_id,
             "session_id": self.session_id,
             "client_base_url": self.client.base_url,
             "timeout": self.timeout,
             "status": "ready",
-            "approach": "tree_sitter_llm" if self.tree_sitter_enabled else "llm_only",
-            "tree_sitter_enabled": self.tree_sitter_enabled,
-            "tree_sitter_status": tree_sitter_status,
-            "methods_available": ["tree_sitter_llm", "llm_only", "fallback"],
+            "approach": "pattern_llm" if self.pattern_analyzer_enabled else "llm_only",
+            "pattern_analyzer_enabled": self.pattern_analyzer_enabled,
+            "pattern_analyzer_status": pattern_analyzer_status,
+            "methods_available": ["pattern_llm", "llm_only", "fallback"],
             "capabilities": [
-                "verified_resource_extraction" if self.tree_sitter_enabled else "llm_resource_detection",
-                "syntax_validation" if self.tree_sitter_enabled else "content_analysis",
+                "verified_resource_extraction" if self.pattern_analyzer_enabled else "llm_resource_detection",
+                "syntax_validation" if self.pattern_analyzer_enabled else "content_analysis",
                 "dependency_analysis",
                 "migration_assessment",
                 "streaming_analysis"
             ]
         }
 
-    def get_tree_sitter_status(self) -> Dict[str, Any]:
-        if not self.tree_sitter:
+    def get_pattern_analyzer_status(self) -> Dict[str, Any]:
+        if not self.pattern_analyzer:
             return {
                 "enabled": False,
                 "reason": "Not initialized",
                 "supported_formats": []
             }
         return {
-            "enabled": self.tree_sitter_enabled,
-            "status": self.tree_sitter.get_status(),
-            "supported_formats": self.tree_sitter.get_supported_formats(),
+            "enabled": self.pattern_analyzer_enabled,
+            "status": self.pattern_analyzer.get_status(),
+            "supported_formats": self.pattern_analyzer.get_supported_formats(),
             "capabilities": [
                 "language_detection",
                 "syntax_validation", 

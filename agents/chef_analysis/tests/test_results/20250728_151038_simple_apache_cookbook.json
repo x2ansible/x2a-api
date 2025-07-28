@@ -1,0 +1,92 @@
+{
+  "test_name": "Simple Apache Cookbook",
+  "expected": "Should work perfectly",
+  "duration": 24.152549982070923,
+  "analysis_time": 23.837,
+  "success": true,
+  "complexity": "Simple",
+  "files": 2,
+  "content_size": 241,
+  "accuracy": "High",
+  "notes": "Basic package and service management",
+  "payload": {
+    "cookbook_name": "simple_apache",
+    "files": {
+      "metadata.rb": "name \"apache\"\nversion \"1.0.0\"\nchef_version \">= 15.0\"",
+      "recipes/default.rb": "package \"httpd\" do\n  action :install\nend\n\nservice \"httpd\" do\n  action [:enable, :start]\nend"
+    }
+  },
+  "response": {
+    "success": true,
+    "cookbook_name": "stream_cookbook_20250728_151038",
+    "version_requirements": {
+      "min_chef_version": ">= 15.0",
+      "min_ruby_version": "string",
+      "migration_effort": "LOW",
+      "estimated_hours": 1.0,
+      "deprecated_features": []
+    },
+    "dependencies": {
+      "is_wrapper": false,
+      "wrapped_cookbooks": [],
+      "direct_deps": [],
+      "runtime_deps": [],
+      "circular_risk": "none"
+    },
+    "functionality": {
+      "primary_purpose": "Install and configure Apache HTTP Server",
+      "services": [
+        "httpd"
+      ],
+      "packages": [
+        "httpd"
+      ],
+      "files_managed": [],
+      "reusability": "MEDIUM",
+      "customization_points": [
+        "configuration files",
+        "service parameters"
+      ]
+    },
+    "recommendations": {
+      "consolidation_action": "REUSE",
+      "rationale": "This cookbook is simple and does not require significant changes.",
+      "migration_priority": "LOW",
+      "risk_factors": []
+    },
+    "metadata": {
+      "analyzed_at": "2025-07-28T19:11:02.791046",
+      "agent_version": "1.0.0",
+      "correlation_id": "84e2b5c9"
+    },
+    "detailed_analysis": "This cookbook is designed to install and configure the Apache HTTP Server. It uses the `package` resource to install the `httpd` package and the `service` resource to enable and start the service. The cookbook does not have any dependencies or wrapper logic. The complexity score is 0, indicating that the cookbook is very simple. The migration effort is low, and the estimated hours required for migration are 1. The cookbook does not manage any files or templates. The syntax validation and file analysis are not available due to the lack of metadata and tree sitter enabled flag. The cookbook is not a wrapper and does not have any circular dependencies.",
+    "key_operations": [
+      "Install Apache HTTP Server package",
+      "Enable and start Apache HTTP Server service"
+    ],
+    "configuration_details": "The cookbook uses the `package` and `service` resources to configure the Apache HTTP Server.",
+    "complexity_level": "Low",
+    "convertible": true,
+    "conversion_notes": "No conversion notes available.",
+    "confidence_source": "chef_semantic_analysis",
+    "analysis_method": "llm_only",
+    "tree_sitter_facts": {
+      "enabled": false,
+      "reason": "Tree-sitter analysis failed",
+      "extraction_method": "none",
+      "ast_available": false
+    },
+    "session_info": {
+      "agent_id": "742e5499-d12a-457d-8bcf-afa8b550997e",
+      "session_id": "44d4ee65-0d54-4d65-bb0e-cfffdd2054b1",
+      "correlation_id": "84e2b5c9",
+      "method_used": "llm_only",
+      "tree_sitter_enabled": false,
+      "tree_sitter_working": false,
+      "analysis_time_seconds": 23.837,
+      "cookbook_name": "stream_cookbook_20250728_151038"
+    }
+  },
+  "timestamp": "2025-07-28T15:11:02.893345",
+  "test_run_id": "20250728_151038"
+}

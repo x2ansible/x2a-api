@@ -1,5 +1,6 @@
 import yaml
 import re
+import os
 from typing import Dict, List, Any, Optional
 
 class ConfigLoader:
@@ -9,9 +10,13 @@ class ConfigLoader:
     - Provides access to base_url, default_model, agents list, and agent_instructions.
     - Also provides access to prompt templates in the 'prompts' section.
     - Raises clear errors on misconfigurations.
+    - Supports environment variable overrides for configuration.
     """
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = None):
+        # Support environment variable override for config file path
+        if config_path is None:
+            config_path = os.getenv("CONFIG_FILE", "config.yaml")
         self.config_path = config_path
         self.config = self._load_config()
         self._agents = self._validate_and_interpolate()
@@ -23,9 +28,48 @@ class ConfigLoader:
                 config = yaml.safe_load(f)
             if not config:
                 raise ValueError("Config file is empty or invalid.")
+            
+            # Apply environment variable overrides
+            config = self._apply_env_overrides(config)
+            
             return config
         except Exception as e:
             raise RuntimeError(f"Failed to load config file '{self.config_path}': {e}")
+
+    def _apply_env_overrides(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply environment variable overrides to configuration."""
+        # Override llamastack base_url if environment variable is set
+        if "llamastack" in config and "base_url" in config["llamastack"]:
+            env_base_url = os.getenv("LLAMASTACK_BASE_URL")
+            if env_base_url:
+                config["llamastack"]["base_url"] = env_base_url
+        
+        # Override llamastack model if environment variable is set
+        if "llamastack" in config:
+            env_model = os.getenv("LLAMASTACK_MODEL")
+            if env_model:
+                config["llamastack"]["default_model"] = env_model
+        
+        # Override file storage upload directory if environment variable is set
+        if "file_storage" in config:
+            env_upload_dir = os.getenv("UPLOAD_DIR")
+            if env_upload_dir:
+                config["file_storage"]["upload_dir"] = env_upload_dir
+        
+        # Override vector DB settings if environment variables are set
+        if "vector_db" in config:
+            env_db_id = os.getenv("VECTOR_DB_ID")
+            if env_db_id:
+                config["vector_db"]["default_db_id"] = env_db_id
+            
+            env_chunk_size = os.getenv("VECTOR_DB_CHUNK_SIZE")
+            if env_chunk_size:
+                try:
+                    config["vector_db"]["default_chunk_size"] = int(env_chunk_size)
+                except ValueError:
+                    pass  # Keep default if invalid integer
+        
+        return config
 
     def _validate_and_interpolate(self) -> List[Dict[str, Any]]:
         """Validates config and interpolates agent_instructions into agents."""

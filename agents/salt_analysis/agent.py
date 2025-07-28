@@ -166,7 +166,7 @@ class SaltAnalysisAgent:
                 raise Exception(f"Prompt formatting failed: {format_error}")
 
             # Direct LLM analysis
-            step_logger.info("🧠 LlamaStack agent Salt analysis using config prompt")
+            step_logger.info(" LlamaStack agent Salt analysis using config prompt")
             result = await self._analyze_direct(prompt, correlation_id, step_logger, analysis_session_id)
 
             # Handle different response scenarios
@@ -431,7 +431,7 @@ class SaltAnalysisAgent:
             yield {
                 "type": "progress",
                 "status": "analyzing",
-                "message": "🧠 LlamaStack agent performing Salt analysis",
+                "message": " LlamaStack agent performing Salt analysis",
                 "progress": 0.6,
                 "correlation_id": correlation_id
             }

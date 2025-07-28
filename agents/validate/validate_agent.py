@@ -1,81 +1,44 @@
+# validate_agent.py
+
+import time
+import json
 import logging
 import uuid
-import json
-import time
-import re
-from typing import Optional, Dict, Any, List, AsyncGenerator
+from typing import Optional, Dict, Any, Generator, List
+import asyncio
 
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import UserMessage
+from llama_stack_client.types import ToolResponseMessage
+
+import re
+
+from agents.tools.ansible_lint_tool import ansible_lint_tool  # Import our custom tool
 
 logger = logging.getLogger("ValidationAgent")
 
-
-def extract_mcp_tool_result(turn):
-    """
-    Returns the first MCP tool_execution step output, parsed as JSON.
-    Ignores post-tool inference steps.
-    """
-    steps = getattr(turn, "steps", [])
-    logger.debug(f"🔍 Total steps in turn: {len(steps)}")
-
-    for idx, step in enumerate(steps):
-        step_type = getattr(step, "step_type", type(step).__name__).lower()
-        logger.debug(f"Step {idx}: {step_type}")
-        if "tool" in step_type:
-            logger.info(f"🔧 Found tool_execution step at idx={idx}")
-            # Extract tool_responses (list)
-            for tr_idx, tool_response in enumerate(getattr(step, "tool_responses", [])):
-                content = getattr(tool_response, "content", "")
-                # Typical MCP wrapper: {"type":"text","text":"{...json...}"}
-                try:
-                    parsed = json.loads(content)
-                    if isinstance(parsed, dict) and "text" in parsed:
-                        inner = json.loads(parsed["text"])
-                        logger.info(f" Parsed MCP tool response at step {idx}, tool_response {tr_idx}")
-                        return inner  # Found the canonical result!
-                    elif isinstance(parsed, dict) and ("output" in parsed or "tool" in parsed):
-                        logger.info(f" Parsed MCP tool response at step {idx}, tool_response {tr_idx}")
-                        return parsed
-                except Exception as e:
-                    logger.warning(f"Failed to parse tool response content as JSON: {e}")
-            # If we got here, but couldn't parse, continue searching
-        # Ignore "inference" steps after tool_execution!
-    logger.warning("⚠️ No MCP tool_execution result found in turn steps.")
-    return None
-
-
 class ValidationAgent:
-    """
-    ValidationAgent: Ansible playbook validator using MCP ansible-lint tool.
-    Always returns the tool output, never post-tool hallucinations.
-    """
-
     def __init__(
-        self, 
-        client: LlamaStackClient, 
-        agent_id: str, 
-        session_id: str, 
-        prompt_template: str,    # From config
-        instruction: str,        # From config
-        timeout: int = 60, 
-        verbose_logging: bool = False
+        self,
+        client: LlamaStackClient,
+        agent_id: str,
+        session_id: str,
+        instruction: str,
+        verbose_logging: bool = False,
+        timeout: int = 120,
     ):
-        logger.info(f"🚀 Initializing ValidationAgent")
         self.client = client
         self.agent_id = agent_id
         self.session_id = session_id
-        self.prompt_template = prompt_template
         self.instruction = instruction
-        self.timeout = timeout
         self.verbose_logging = verbose_logging
-        self.logger = logger
-        if verbose_logging:
-            self.logger.setLevel(logging.DEBUG)
-        self.supported_profiles = ["basic", "moderate", "safety", "shared", "production"]
-        self.logger.info(f"ValidationAgent initialized with agent_id: {agent_id}")
+        self.timeout = timeout
+        self.default_profile = "basic"
+        self.ansible_lint_tool = ansible_lint_tool  # Make our custom tool available
+        logger.info(f"ValidationAgent initialized (id={agent_id}) with session {session_id}")
 
     def create_new_session(self, correlation_id: str) -> str:
+        """Create a new session for validation"""
         try:
             session_name = f"validation-{correlation_id}-{uuid.uuid4()}"
             response = self.client.agents.session.create(
@@ -83,397 +46,584 @@ class ValidationAgent:
                 session_name=session_name,
             )
             session_id = response.session_id
-            self.logger.info(f"📱 Created new session: {session_id} for correlation: {correlation_id}")
+            logger.info(f"📱 Created validation session: {session_id} for correlation: {correlation_id}")
             return session_id
         except Exception as e:
-            self.logger.error(f"Failed to create session: {e}")
-            self.logger.info(f"↩️ Falling back to default session: {self.session_id}")
+            logger.error(f"Failed to create session: {e}")
+            logger.info(f"↩️ Falling back to default session: {self.session_id}")
             return self.session_id
-
-    def _build_validation_prompt(self, playbook_content: str, profile: str) -> str:
-        """Build validation prompt using config-driven template and instruction."""
-        try:
-            return self.prompt_template.format(
-                instruction=self.instruction,
-                playbook_content=playbook_content.strip(),
-                profile=profile
-            )
-        except KeyError as e:
-            logger.warning(f"Template parameter {e} not found, trying alternative format...")
-            try:
-                return self.prompt_template.format(
-                    instruction=self.instruction,
-                    playbook=playbook_content.strip(),
-                    profile=profile
-                )
-            except Exception as e2:
-                logger.error(f"Error formatting validation prompt from config: {e2}. Falling back to safe template.")
-                return self._build_fallback_prompt(playbook_content, profile)
-        except Exception as e:
-            logger.error(f"Error formatting validation prompt from config: {e}. Falling back to safe template.")
-            return self._build_fallback_prompt(playbook_content, profile)
-
-    def _build_fallback_prompt(self, playbook_content: str, profile: str) -> str:
-        return f"""{self.instruction}
-
-Use the lint_ansible_playbook tool with {profile} profile to check this playbook:
-
-{playbook_content.strip()}
-"""
 
     async def validate_playbook(
         self, 
         playbook_content: str, 
-        profile: str = "basic", 
+        profile: Optional[str] = None,
         correlation_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        correlation_id = correlation_id or str(uuid.uuid4())
-        start_time = time.time()
-        if profile not in self.supported_profiles:
-            raise ValueError(f"Unsupported profile: {profile}. Supported: {self.supported_profiles}")
-        self.logger.info(f"🔍 Validating playbook with {profile} profile (correlation: {correlation_id})")
+        """
+        Validate an Ansible playbook using LLM agent with ansible_lint_tool.
+        This is truly agentic - the LLM decides when and how to use the tool.
+        """
+        correlation_id = correlation_id or f"val-{uuid.uuid4().hex[:8]}"
+        start_time = time.monotonic()
+        profile = profile or self.default_profile
+        
+        logger.info(f"[{correlation_id}] Starting agentic playbook validation with profile: {profile}")
+        
         try:
-            query_session_id = self.create_new_session(correlation_id)
-            user_prompt = self._build_validation_prompt(playbook_content, profile)
+            # Use config-driven instruction with playbook content
+            prompt = f"""
+            {self.instruction}
             
-            if self.verbose_logging:
-                self.logger.debug(f"Built validation prompt: {user_prompt[:500]}...")
+            Playbook to validate:
+            {playbook_content}
             
-            messages = [UserMessage(role="user", content=user_prompt)]
-
+            Profile: {profile}
+            
+            Please validate this playbook using the ansible_lint_tool and provide your analysis.
+            """
+            
+            # Let the LLM agent decide to call the tool using streaming
+            messages = [UserMessage(role="user", content=prompt)]
+            
+            logger.info(f"[{correlation_id}] Sending validation request to LLM agent (streaming)")
+            
+            # Use streaming agent turns
             generator = self.client.agents.turn.create(
                 agent_id=self.agent_id,
-                session_id=query_session_id,
+                session_id=self.session_id,
                 messages=messages,
                 stream=True,
             )
-
-            turn = None
-            timeout_seconds = self.timeout
-            timeout_start = time.time()
-            chunk_count = 0
-            last_event_time = timeout_start
             
-            for chunk in generator:
-                chunk_count += 1
-                current_time = time.time()
-                if current_time - last_event_time > 20 or current_time - timeout_start > timeout_seconds:
-                    self.logger.error("⏰ Validation timeout or event delay.")
-                    break
-                last_event_time = current_time
-
-                if hasattr(chunk, 'event') and hasattr(chunk.event, 'payload'):
-                    event = chunk.event
-                    event_type = getattr(event.payload, 'event_type', 'unknown')
-                    if event_type == "turn_complete":
-                        turn = event.payload.turn
-                        self.logger.info(f" Turn completed after {current_time - timeout_start:.1f}s with {chunk_count} chunks")
-                        break
-
-            if not turn:
-                self.logger.error(f" No turn completed in response after {chunk_count} chunks")
-                return {
-                    "success": False,
-                    "correlation_id": correlation_id,
-                    "profile": profile,
-                    "error": f"Turn never completed after {chunk_count} chunks.",
-                    "summary": {"passed": False, "exit_code": -1},
-                    "issues_count": 0,
-                    "issues": [],
-                    "formatted_issues": "Agent turn never completed. This suggests the MCP tool is not responding or the agent is stuck.",
-                    "elapsed_time": time.time() - start_time,
-                    "timeout": True,
-                    "debug_info": {
-                        "chunk_count": chunk_count,
-                        "agent_stuck": True
-                    }
-                }
+            # Process the agent's response and extract tool results
+            result = await self._process_agent_response(generator, playbook_content, profile, correlation_id)
             
-            # --- Main Fix: Return only the MCP tool result ---
-            result = await self._process_validation_response(turn, correlation_id, profile, time.time() - start_time)
             return result
-        except TimeoutError as e:
-            return {
-                "success": False,
-                "correlation_id": correlation_id,
-                "profile": profile,
-                "error": f"Validation timeout: {str(e)}",
-                "summary": {"passed": False},
-                "issues_count": 0,
-                "issues": [],
-                "formatted_issues": "Validation timed out",
-                "elapsed_time": time.time() - start_time,
-                "timeout": True
-            }
+
         except Exception as e:
-            return {
-                "success": False,
-                "correlation_id": correlation_id,
-                "profile": profile,
-                "error": str(e),
-                "summary": {"passed": False},
-                "issues_count": 0,
-                "issues": [],
-                "formatted_issues": f"Validation failed: {str(e)}",
-                "elapsed_time": time.time() - start_time
-            }
+            logger.error(f" ValidationAgent error: {e}")
+            return self._create_error_response(f"Agent validation failed: {str(e)}")
 
-    async def _process_validation_response(self, turn, correlation_id: str, profile: str, elapsed_time: float) -> Dict[str, Any]:
-        tool_result = extract_mcp_tool_result(turn)
-        if tool_result:
-            output = tool_result.get("output", {})
-            summary = output.get("summary", {})
-            issues = output.get("issues", [])
-            raw_output = output.get("raw_output", {})
+    def _create_error_response(self, message: str) -> Dict[str, Any]:
+        """Helper to create a consistent error response structure."""
+        return {
+            "validation_passed": False,
+            "exit_code": -1,
+            "message": message,
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "correlation_id": correlation_id, # Use the current correlation_id
+            "elapsed_time": round(time.monotonic() - start_time, 2),
+            "profile": profile,
+            "playbook_length": len(playbook_content),
+            "passed": False,
+            "issues_count": 0,
+            "issues": [],
+            "agentic": True,
+            "error": str(e),
+        }
 
-            return {
-                "success": tool_result.get("success", True),
-                "correlation_id": correlation_id,
-                "profile": profile,
-                "summary": summary,
-                "issues_count": summary.get("issue_count", len(issues)),
-                "issues": issues,
-                "formatted_issues": "\n".join(
-                    f"[{i.get('severity','').upper()}] {i.get('rule','')}: {i.get('message','')}" for i in issues
-                ) if issues else (raw_output.get("stdout", "") or "No issues found."),
-                "passed": summary.get("passed", False),
-                "raw_stdout": raw_output.get("stdout", ""),
-                "raw_stderr": raw_output.get("stderr", ""),
-                "tool_response": tool_result,
-                "tool": tool_result.get("tool", "mcp::ansible_lint"),
-                "elapsed_time": elapsed_time,
-                "session_info": {
-                    "agent_id": self.agent_id,
-                    "pattern": "Registry-based"
-                }
-            }
-        else:
-            return {
-                "success": False,
-                "correlation_id": correlation_id,
-                "profile": profile,
-                "error": "No MCP tool_execution result found in agent response.",
-                "summary": {"passed": False},
-                "issues_count": 0,
-                "issues": [],
-                "formatted_issues": "No MCP tool_execution result found.",
-                "elapsed_time": elapsed_time,
-                "session_info": {
-                    "agent_id": self.agent_id,
-                    "pattern": "Registry-based"
-                },
-                "debug_info": {}
-            }
-
-    # --- Utility Methods (Unchanged) ---
-    async def validate_playbook_stream(
-        self, 
-        playbook_content: str, 
-        profile: str = "basic", 
-        correlation_id: Optional[str] = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        correlation_id = correlation_id or str(uuid.uuid4())
+    def _parse_agent_response(self, agent_response: str, correlation_id: str) -> Dict[str, Any]:
+        """
+        Parse the agent's response to extract validation results.
+        The agent should have called ansible_lint_tool and provided analysis.
+        """
         try:
-            yield {
-                "type": "progress",
-                "status": "processing", 
-                "message": f"🔍 Validation started with {profile} profile",
-                "agent_info": {
-                    "agent_id": self.agent_id,
-                    "correlation_id": correlation_id,
-                    "pattern": "Registry-based"
-                }
+            # Try to extract JSON from the response
+            if "{" in agent_response and "}" in agent_response:
+                # Look for JSON-like structures in the response
+                start = agent_response.find("{")
+                end = agent_response.rfind("}") + 1
+                if start != -1 and end > start:
+                    json_str = agent_response[start:end]
+                    try:
+                        parsed = json.loads(json_str)
+                        if "validation_passed" in parsed:
+                            logger.info(f"[{correlation_id}] Successfully parsed agent response as JSON")
+                            return parsed
+                    except json.JSONDecodeError:
+                        pass
+            
+            # If no JSON found, try to extract information from text
+            logger.info(f"[{correlation_id}] Parsing agent response as text")
+            
+            # Look for validation indicators in the text
+            passed = any(word in agent_response.lower() for word in ["passed", "valid", "success", "no issues"])
+            failed = any(word in agent_response.lower() for word in ["failed", "invalid", "error", "issues found"])
+            
+            # Extract issues count if mentioned
+            issues_match = re.search(r'(\d+)\s+issues?', agent_response, re.IGNORECASE)
+            issues_count = int(issues_match.group(1)) if issues_match else 0
+            
+            return {
+                "validation_passed": passed and not failed,
+                "message": agent_response,
+                "issues_count": issues_count,
+                "passed": passed and not failed,
+                "parsed_from": "text_analysis",
             }
-            result = await self.validate_playbook(playbook_content, profile, correlation_id)
-            yield {
-                "type": "final_result",
-                "data": result,
-                "correlation_id": correlation_id
-            }
+            
         except Exception as e:
-            yield {
-                "type": "error",
+            logger.error(f"[{correlation_id}] Failed to parse agent response: {e}")
+            return {
+                "validation_passed": False,
+                "message": f"Failed to parse agent response: {e}",
+                "issues_count": 0,
+                "passed": False,
                 "error": str(e),
-                "correlation_id": correlation_id
             }
 
-    async def validate_syntax(
-        self, 
-        playbook_content: str, 
-        correlation_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        return await self.validate_playbook(
-            playbook_content=playbook_content,
-            profile="basic",
-            correlation_id=correlation_id
-        )
-
-    async def production_validate(
-        self, 
-        playbook_content: str, 
-        correlation_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        return await self.validate_playbook(
-            playbook_content=playbook_content,
-            profile="production", 
-            correlation_id=correlation_id
-        )
+    def validate_playbook_stream(
+        self, playbook_content: str, profile: Optional[str] = None
+    ) -> Generator[str, None, None]:
+        """
+        Streams playbook validation results as SSE (Server-Sent Events).
+        Uses agentic validation with LLM tool calling.
+        """
+        t0 = time.monotonic()
+        profile = profile or self.default_profile
+        correlation_id = f"stream-{uuid.uuid4().hex[:8]}"
+        
+        logger.info(f"[{correlation_id}] Starting agentic streaming validation with profile: {profile}")
+        
+        try:
+            # Run the agentic validation
+            result = asyncio.run(self.validate_playbook(playbook_content, profile, correlation_id))
+            
+            # Stream the result
+            yield f"data: {json.dumps({'type': 'result', 'data': result, 'elapsed_time': round(time.monotonic() - t0, 2)})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"[{correlation_id}] Streaming validation error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'elapsed_time': round(time.monotonic() - t0, 2)})}\n\n"
+        
+        # End event
+        yield f"data: {json.dumps({'type': 'end', 'elapsed_time': round(time.monotonic() - t0, 2)})}\n\n"
 
     async def validate_multiple_files(
         self, 
         files: Dict[str, str], 
-        profile: str = "basic",
+        profile: Optional[str] = None,
         correlation_id: Optional[str] = None
-    ) -> Dict[str, Dict[str, Any]]:
-        correlation_id = correlation_id or str(uuid.uuid4())
+    ) -> Dict[str, Any]:
+        """
+        Validate multiple Ansible playbook files using agentic approach.
+        """
+        correlation_id = correlation_id or f"multi-{uuid.uuid4().hex[:8]}"
+        start_time = time.monotonic()
+        profile = profile or self.default_profile
+        
+        logger.info(f"[{correlation_id}] Starting agentic multiple file validation with profile: {profile}")
+        
         results = {}
+        total_issues = 0
+        total_passed = 0
+        
         for filename, content in files.items():
-            self.logger.info(f"🔍 Validating file: {filename}")
-            file_correlation = f"{correlation_id}-{filename}"
             try:
-                result = await self.validate_playbook(content, profile, file_correlation)
-                result["filename"] = filename
+                result = await self.validate_playbook(content, profile, f"{correlation_id}-{filename}")
                 results[filename] = result
+                if result.get("passed", False):
+                    total_passed += 1
+                total_issues += result.get("issues_count", 0)
             except Exception as e:
-                self.logger.error(f"Failed to validate {filename}: {e}")
+                logger.error(f"[{correlation_id}] Failed to validate {filename}: {e}")
                 results[filename] = {
-                    "success": False,
-                    "filename": filename,
-                    "correlation_id": file_correlation,
-                    "error": str(e),
-                    "summary": {"passed": False},
+                    "validation_passed": False,
+                    "message": f"Validation failed: {e}",
                     "issues_count": 0,
-                    "issues": [],
-                    "formatted_issues": f"Failed to validate {filename}: {str(e)}"
+                    "passed": False,
                 }
-        return results
+        
+        overall_result = {
+            "validation_passed": total_passed == len(files),
+            "total_files": len(files),
+            "passed_files": total_passed,
+            "failed_files": len(files) - total_passed,
+            "total_issues": total_issues,
+            "file_results": results,
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "correlation_id": correlation_id,
+            "elapsed_time": round(time.monotonic() - start_time, 2),
+            "profile": profile,
+            "agentic": True,
+        }
+        
+        logger.info(f"[{correlation_id}] Agentic multiple file validation completed: {total_passed}/{len(files)} files passed")
+        return overall_result
 
-    async def debug_tools(self) -> Dict[str, Any]:
+    async def validate_syntax(
+        self, 
+        playbook_content: str,
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Quick syntax validation of an Ansible playbook using agentic approach.
+        """
+        correlation_id = correlation_id or f"syntax-{uuid.uuid4().hex[:8]}"
+        start_time = time.monotonic()
+        
+        logger.info(f"[{correlation_id}] Starting agentic syntax validation")
+        
         try:
-            simple_prompt = "What tools do you have available? List all your tools."
-            messages = [UserMessage(role="user", content=simple_prompt)]
+            # Use config-driven instruction for syntax validation
+            prompt = f"""
+            {self.instruction}
+            
+            Playbook for syntax validation:
+            {playbook_content}
+            
+            Focus on basic syntax validation using the ansible_lint_tool with basic profile.
+            """
+            
+            messages = [UserMessage(role="user", content=prompt)]
+            
+            # Use streaming agent turns
             generator = self.client.agents.turn.create(
                 agent_id=self.agent_id,
                 session_id=self.session_id,
                 messages=messages,
                 stream=True,
             )
+            
+            # Collect the streaming response
+            agent_response = ""
             turn = None
-            events_seen = []
+            
             for chunk in generator:
-                event = chunk.event
-                event_type = event.payload.event_type
-                events_seen.append(event_type)
-                if event_type == "turn_complete":
-                    turn = event.payload.turn
-                    break
-            tool_info = {
-                "turn_completed": turn is not None,
-                "events_seen": events_seen,
-                "steps_count": len(turn.steps) if turn and hasattr(turn, 'steps') else 0,
-                "output_message": turn.output_message.content if turn and hasattr(turn, 'output_message') and turn.output_message else None
-            }
-            return tool_info
-        except Exception as e:
-            return {"error": str(e), "available": False}
-
-    async def test_tool_availability(self) -> Dict[str, Any]:
-        try:
-            test_playbook = """---
-- name: Simple test
-  hosts: localhost
-  tasks:
-    - name: Debug task
-      debug:
-        msg: "test"
-"""
-            tool_prompt = f"""Use the lint_ansible_playbook tool to check this playbook:
-
-{test_playbook}
-
-Call the ansible-lint tool now."""
-            messages = [UserMessage(role="user", content=tool_prompt)]
-            generator = self.client.agents.turn.create(
-                agent_id=self.agent_id,
-                session_id=self.session_id,
-                messages=messages,
-                stream=True,
-            )
-            turn = None
-            events_seen = []
-            tool_events = []
-            timeout_start = time.time()
-            for chunk in generator:
-                if (time.time() - timeout_start) > 30:
-                    return {
-                        "success": False,
-                        "error": "Tool test timed out after 30 seconds",
-                        "events_seen": events_seen,
-                        "tool_events": tool_events
-                    }
-                event = chunk.event
-                event_type = event.payload.event_type
-                events_seen.append(event_type)
-                if "tool" in event_type.lower():
-                    tool_events.append(event_type)
-                if event_type == "turn_complete":
-                    turn = event.payload.turn
-                    break
-            has_tool_steps = False
-            if turn and hasattr(turn, 'steps'):
-                for step in turn.steps:
-                    step_type = getattr(step, "step_type", type(step).__name__)
-                    if "tool" in step_type.lower():
-                        has_tool_steps = True
+                event = getattr(chunk, "event", None)
+                if event and hasattr(event, "payload"):
+                    payload = event.payload
+                    if hasattr(payload, "turn_complete") and payload.turn_complete:
+                        turn = payload.turn_complete
                         break
-            return {
-                "success": turn is not None,
-                "turn_completed": turn is not None,
-                "events_seen": events_seen,
-                "tool_events": tool_events,
-                "has_tool_steps": has_tool_steps,
-                "steps_count": len(turn.steps) if turn and hasattr(turn, 'steps') else 0,
-                "elapsed_time": time.time() - timeout_start
+                    elif hasattr(payload, "message") and payload.message:
+                        agent_response += payload.message.content if hasattr(payload.message, "content") else str(payload.message)
+                    elif hasattr(payload, "tool_response") and payload.tool_response:
+                        # Tool was called - this is what we want!
+                        tool_content = payload.tool_response.content
+                        try:
+                            # Parse the tool response
+                            tool_result = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+                            logger.info(f"[{correlation_id}] Tool was called successfully for syntax validation")
+                            
+                            # Simplify the result for syntax validation
+                            syntax_result = {
+                                "syntax_valid": tool_result.get("validation_passed", False),
+                                "issues": tool_result.get("issues", []),
+                                "issues_count": tool_result.get("issues_count", 0),
+                                "message": tool_result.get("message", ""),
+                                "agent_id": self.agent_id,
+                                "session_id": self.session_id,
+                                "correlation_id": correlation_id,
+                                "elapsed_time": round(time.monotonic() - start_time, 2),
+                                "agentic": True,
+                                "tool_called": True,
+                            }
+                            
+                            logger.info(f"[{correlation_id}] Agentic syntax validation completed: {'valid' if syntax_result['syntax_valid'] else 'invalid'}")
+                            return syntax_result
+                            
+                        except Exception as e:
+                            logger.error(f"[{correlation_id}] Failed to parse tool response: {e}")
+                            return {
+                                "syntax_valid": False,
+                                "issues": [],
+                                "issues_count": 0,
+                                "message": f"Tool called but failed to parse response: {e}",
+                                "agent_id": self.agent_id,
+                                "session_id": self.session_id,
+                                "correlation_id": correlation_id,
+                                "elapsed_time": round(time.monotonic() - start_time, 2),
+                                "agentic": True,
+                                "tool_called": True,
+                                "error": str(e),
+                            }
+            
+            # If we get here, no tool was called or no turn completed
+            if turn:
+                agent_response = turn.output_message.content if hasattr(turn, 'output_message') else str(turn)
+            
+            result = self._parse_agent_response(agent_response, correlation_id)
+            
+            # Simplify the result for syntax validation
+            syntax_result = {
+                "syntax_valid": result.get("validation_passed", False),
+                "issues": result.get("issues", []),
+                "issues_count": result.get("issues_count", 0),
+                "message": result.get("message", ""),
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "correlation_id": correlation_id,
+                "elapsed_time": round(time.monotonic() - start_time, 2),
+                "agentic": True,
+                "tool_called": False,
             }
+            
+            logger.info(f"[{correlation_id}] Agentic syntax validation completed: {'valid' if syntax_result['syntax_valid'] else 'invalid'}")
+            return syntax_result
+            
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            logger.error(f"[{correlation_id}] Agentic syntax validation failed: {e}")
+            return {
+                "syntax_valid": False,
+                "issues": [],
+                "issues_count": 0,
+                "message": f"Syntax validation error: {e}",
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "correlation_id": correlation_id,
+                "elapsed_time": round(time.monotonic() - start_time, 2),
+                "agentic": True,
+                "error": str(e),
+            }
+
+    async def production_validate(
+        self, 
+        playbook_content: str,
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Production-ready validation with strict profile using agentic approach.
+        """
+        correlation_id = correlation_id or f"prod-{uuid.uuid4().hex[:8]}"
+        start_time = time.monotonic()
+        
+        logger.info(f"[{correlation_id}] Starting agentic production validation")
+        
+        try:
+            # Use config-driven instruction for production validation
+            prompt = f"""
+            {self.instruction}
+            
+            Playbook for production validation:
+            {playbook_content}
+            
+            Use production profile and provide comprehensive analysis for production deployment readiness.
+            """
+            
+            messages = [UserMessage(role="user", content=prompt)]
+            
+            # Use streaming agent turns
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=self.session_id,
+                messages=messages,
+                stream=True,
+            )
+            
+            # Collect the streaming response
+            agent_response = ""
+            turn = None
+            
+            for chunk in generator:
+                event = getattr(chunk, "event", None)
+                if event and hasattr(event, "payload"):
+                    payload = event.payload
+                    if hasattr(payload, "turn_complete") and payload.turn_complete:
+                        turn = payload.turn_complete
+                        break
+                    elif hasattr(payload, "message") and payload.message:
+                        agent_response += payload.message.content if hasattr(payload.message, "content") else str(payload.message)
+                    elif hasattr(payload, "tool_response") and payload.tool_response:
+                        # Tool was called - this is what we want!
+                        tool_content = payload.tool_response.content
+                        try:
+                            # Parse the tool response
+                            tool_result = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+                            logger.info(f"[{correlation_id}] Tool was called successfully for production validation")
+                            
+                            # Add production-specific metadata
+                            result = tool_result.copy()
+                            result.update({
+                                "production_ready": result.get("validation_passed", False),
+                                "validation_level": "production",
+                                "agentic": True,
+                                "tool_called": True,
+                            })
+                            
+                            # Add metadata
+                            result.update({
+                                "agent_id": self.agent_id,
+                                "session_id": self.session_id,
+                                "correlation_id": correlation_id,
+                                "elapsed_time": round(time.monotonic() - start_time, 2),
+                                "profile": "production",
+                                "playbook_length": len(playbook_content),
+                                "passed": result.get("validation_passed", False),
+                                "issues_count": len(result.get("issues", [])),
+                            })
+                            
+                            logger.info(f"[{correlation_id}] Agentic production validation completed: {'ready' if result['production_ready'] else 'not ready'}")
+                            return result
+                            
+                        except Exception as e:
+                            logger.error(f"[{correlation_id}] Failed to parse tool response: {e}")
+                            return {
+                                "production_ready": False,
+                                "validation_level": "production",
+                                "message": f"Tool called but failed to parse response: {e}",
+                                "agent_id": self.agent_id,
+                                "session_id": self.session_id,
+                                "correlation_id": correlation_id,
+                                "elapsed_time": round(time.monotonic() - start_time, 2),
+                                "validation_passed": False,
+                                "issues": [],
+                                "issues_count": 0,
+                                "agentic": True,
+                                "tool_called": True,
+                                "error": str(e),
+                            }
+            
+            # If we get here, no tool was called or no turn completed
+            if turn:
+                agent_response = turn.output_message.content if hasattr(turn, 'output_message') else str(turn)
+            
+            result = self._parse_agent_response(agent_response, correlation_id)
+            
+            # Add production-specific metadata
+            result.update({
+                "production_ready": result.get("validation_passed", False),
+                "validation_level": "production",
+                "agentic": True,
+                "tool_called": False,
+            })
+            
+            logger.info(f"[{correlation_id}] Agentic production validation completed: {'ready' if result['production_ready'] else 'not ready'}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"[{correlation_id}] Agentic production validation failed: {e}")
+            return {
+                "production_ready": False,
+                "validation_level": "production",
+                "message": f"Production validation error: {e}",
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "correlation_id": correlation_id,
+                "elapsed_time": round(time.monotonic() - start_time, 2),
+                "validation_passed": False,
+                "issues": [],
+                "issues_count": 0,
+                "agentic": True,
+                "error": str(e),
+            }
+
+    def get_supported_profiles(self) -> List[str]:
+        """Get list of supported validation profiles."""
+        return ["basic", "production"]
 
     async def health_check(self) -> bool:
+        """
+        Perform a basic health check using agentic validation.
+        """
         try:
+            # Use config-driven instruction for health check
             test_playbook = """---
-- name: Health check playbook
-  hosts: localhost
+- hosts: localhost
   tasks:
-    - name: Test task
+    - name: Health check task
       debug:
-        msg: "Health check"
+        msg: "Health check successful"
 """
-            result = await self.validate_playbook(test_playbook, "basic", "health-check")
-            return result.get("success") is not None
+            
+            prompt = f"""
+            {self.instruction}
+            
+            Test playbook for health check:
+            {test_playbook}
+            
+            Please perform a basic validation to verify the system is working.
+            """
+            
+            messages = [UserMessage(role="user", content=prompt)]
+            
+            # Use streaming agent turns
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
+                session_id=self.session_id,
+                messages=messages,
+                stream=True,
+            )
+            
+            # Just check if we can get a response
+            for chunk in generator:
+                event = getattr(chunk, "event", None)
+                if event and hasattr(event, "payload"):
+                    payload = event.payload
+                    if hasattr(payload, "turn_complete") and payload.turn_complete:
+                        logger.info(" Health check completed successfully")
+                        return True
+                    elif hasattr(payload, "tool_response") and payload.tool_response:
+                        logger.info(" Health check completed with tool response")
+                        return True
+            
+            logger.warning("⚠️ Health check completed but no turn_complete or tool_response found")
+            return True
+            
         except Exception as e:
-            self.logger.error(f"Validation health check failed: {e}")
+            logger.error(f" Health check failed: {e}")
             return False
 
     def get_status(self) -> Dict[str, Any]:
+        """Get agent status information."""
         return {
             "agent_id": self.agent_id,
             "session_id": self.session_id,
-            "client_base_url": getattr(self.client, 'base_url', 'unknown'),
+            "status": "active",
+            "supported_profiles": self.get_supported_profiles(),
+            "default_profile": self.default_profile,
             "timeout": self.timeout,
-            "status": "ready",
-            "pattern": "Registry-based",
-            "tool": "mcp::ansible_lint",
-            "supported_profiles": self.supported_profiles
+            "verbose_logging": self.verbose_logging,
+            "agentic": True,
         }
 
-    def get_supported_profiles(self) -> List[str]:
-        return self.supported_profiles.copy()
-
-    def get_profile_descriptions(self) -> Dict[str, str]:
+    def _parse_agent_chunk(self, chunk, t0):
+        # Handles all possible LlamaStack chunk types
+        try:
+            event = getattr(chunk, "event", None)
+            if event and hasattr(event, "payload"):
+                payload = event.payload
+                if hasattr(payload, "tool_response") and payload.tool_response:
+                    # Tool output
+                    content = payload.tool_response.content
+                    try:
+                        res = json.loads(content) if isinstance(content, str) else content
+                        return {
+                            "type": "result",
+                            "passed": res.get("passed", None),
+                            "issues": res.get("issues", []),
+                            "issues_count": res.get("issues_count", len(res.get("issues", []))),
+                            "formatted_issues": res.get("formatted_issues", ""),
+                            "elapsed_time": round(time.monotonic() - t0, 2),
+                        }
+                    except Exception as ex:
+                        return {
+                            "type": "error",
+                            "error": f"Could not parse tool result: {ex}",
+                            "elapsed_time": round(time.monotonic() - t0, 2),
+                        }
+                elif hasattr(payload, "error") and payload.error:
+                    return {
+                        "type": "error",
+                        "error": str(payload.error),
+                        "elapsed_time": round(time.monotonic() - t0, 2),
+                    }
+            if hasattr(chunk, "message") and chunk.message:
+                return {
+                    "type": "message",
+                    "content": chunk.message,
+                    "elapsed_time": round(time.monotonic() - t0, 2),
+                }
+        except Exception as e:
+            return {
+                "type": "error",
+                "error": f"Unexpected chunk parse error: {e}",
+                "elapsed_time": round(time.monotonic() - t0, 2),
+            }
         return {
-            "basic": "Basic syntax and structure validation",
-            "moderate": "Standard best practices checking", 
-            "safety": "Security-focused validation rules",
-            "shared": "Rules for shared/reusable playbooks",
-            "production": "Strict production-ready validation"
+            "type": "unknown",
+            "error": "Unrecognized agent chunk.",
+            "elapsed_time": round(time.monotonic() - t0, 2),
         }

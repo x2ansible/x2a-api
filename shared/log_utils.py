@@ -8,6 +8,7 @@ import sys
 from json import JSONDecodeError
 from typing import List, Any, Dict, Optional
 from datetime import datetime
+import uuid
 
 try:
     from rich.pretty import pprint
@@ -25,171 +26,84 @@ except ImportError:
     LLAMASTACK_LOGGER_AVAILABLE = False
 
 
+def create_correlation_id() -> str:
+    """Create a unique correlation ID for request tracking."""
+    return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
 class ChefAnalysisLogger:
-    """
-    Enhanced logger for Chef Analysis Agent with step tracking and rich formatting.
-    """
+    """Custom logger for Chef analysis with correlation ID tracking."""
     
-    def __init__(self, name: str = "chef_analysis", correlation_id: Optional[str] = None):
-        self.name = name
+    def __init__(self, correlation_id: str):
         self.correlation_id = correlation_id
-        self.console = Console() if RICH_AVAILABLE else None
-        self.logger = self._setup_logger()
+        self.logger = logging.getLogger(f"chef_analysis_{correlation_id}")
+        self.logger.setLevel(logging.INFO)
         
-        if LLAMASTACK_LOGGER_AVAILABLE:
-            self.agent_event_logger = AgentEventLogger()
-        else:
-            self.agent_event_logger = None
-    
-    def _setup_logger(self) -> logging.Logger:
-        """Setup logger with rich formatting if available."""
-        logger = logging.getLogger(self.name)
-        
-        if logger.handlers:
-            return logger
-        
-        logger.setLevel(logging.INFO)
-        
-        if RICH_AVAILABLE:
-            # Use Rich handler for beautiful formatting
-            handler = RichHandler(
-                console=self.console,
-                show_time=True,
-                show_path=True,
-                markup=True,
-                rich_tracebacks=True
-            )
-            formatter = logging.Formatter(
-                fmt="[bold blue]{name}[/] - {message}",
-                style="{"
-            )
-        else:
-            # Fallback to standard handler
-            handler = logging.StreamHandler(sys.stdout)
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-        
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        return logger
-    
-    def info(self, message: str, **kwargs):
-        """Log info message with correlation ID."""
-        formatted_message = self._format_message(message, **kwargs)
-        self.logger.info(formatted_message)
-    
-    def debug(self, message: str, **kwargs):
-        """Log debug message with correlation ID."""
-        formatted_message = self._format_message(message, **kwargs)
-        self.logger.debug(formatted_message)
-    
-    def warning(self, message: str, **kwargs):
-        """Log warning message with correlation ID."""
-        formatted_message = self._format_message(message, **kwargs)
-        self.logger.warning(formatted_message)
-    
-    def error(self, message: str, **kwargs):
-        """Log error message with correlation ID."""
-        formatted_message = self._format_message(message, **kwargs)
-        self.logger.error(formatted_message)
-    
-    def _format_message(self, message: str, **kwargs) -> str:
-        """Format message with correlation ID and additional context."""
-        parts = []
-        
-        if self.correlation_id:
-            parts.append(f"[{self.correlation_id}]")
-        
-        parts.append(message)
-        
-        if kwargs:
-            context_parts = []
-            for key, value in kwargs.items():
-                if isinstance(value, dict):
-                    context_parts.append(f"{key}={json.dumps(value, indent=2)}")
-                else:
-                    context_parts.append(f"{key}={value}")
+        # Create console handler if not already exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(logging.INFO)
             
-            if context_parts:
-                parts.append(f"({', '.join(context_parts)})")
+            # Create formatter
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(correlation_id)s] %(message)s'
+            )
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
         
-        return " ".join(parts)
+        # Add correlation ID to log records
+        for handler in self.logger.handlers:
+            handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(correlation_id)s] %(message)s'
+            ))
+    
+    def _log_with_correlation(self, level: str, message: str):
+        """Log message with correlation ID."""
+        extra = {'correlation_id': self.correlation_id}
+        if level == 'info':
+            self.logger.info(message, extra=extra)
+        elif level == 'warning':
+            self.logger.warning(message, extra=extra)
+        elif level == 'error':
+            self.logger.error(message, extra=extra)
+        elif level == 'debug':
+            self.logger.debug(message, extra=extra)
+    
+    def info(self, message: str):
+        """Log info message."""
+        self._log_with_correlation('info', message)
+    
+    def warning(self, message: str):
+        """Log warning message."""
+        self._log_with_correlation('warning', message)
+    
+    def error(self, message: str):
+        """Log error message."""
+        self._log_with_correlation('error', message)
+    
+    def debug(self, message: str):
+        """Log debug message."""
+        self._log_with_correlation('debug', message)
     
     def log_cookbook_analysis_start(self, cookbook_name: str, file_count: int):
-        """Log cookbook analysis start with details."""
-        self.info(
-            f"🍳 Starting cookbook analysis: [bold green]{cookbook_name}[/]",
-            file_count=file_count,
-            timestamp=datetime.utcnow().isoformat()
-        )
+        """Log the start of cookbook analysis."""
+        self.info(f"Starting analysis of cookbook '{cookbook_name}' with {file_count} files")
     
-    def log_llamastack_request(self, session_id: str, model: str, content_preview: str):
-        """Log LlamaStack request details."""
-        preview = content_preview[:100] + "..." if len(content_preview) > 100 else content_preview
-        self.info(
-            f"🚀 Sending LlamaStack request",
-            session_id=session_id,
-            model=model,
-            content_preview=preview
-        )
-    
-    def log_llamastack_response(self, response_length: int, processing_time: float):
-        """Log LlamaStack response details."""
-        self.info(
-            f" Received LlamaStack response",
-            response_length=response_length,
-            processing_time_seconds=round(processing_time, 3)
-        )
-    
-    def log_json_extraction(self, success: bool, extracted_sections: List[str]):
-        """Log JSON extraction results."""
-        if success:
-            self.info(
-                f"🔍 Successfully extracted JSON analysis",
-                sections_found=extracted_sections
-            )
-        else:
-            self.warning(f"⚠️ Failed to extract valid JSON from response")
-    
-    def log_analysis_completion(self, analysis_result: Dict[str, Any], total_time: float):
+    def log_analysis_completion(self, result: Dict[str, Any], total_time: float):
         """Log analysis completion with summary."""
-        summary = self._create_analysis_summary(analysis_result)
-        self.info(
-            f" Chef cookbook analysis completed",
-            total_time_seconds=round(total_time, 3),
-            **summary
-        )
+        success = result.get('success', False)
+        method = result.get('analysis_method', 'unknown')
+        resources = result.get('tree_sitter_facts', {}).get('total_resources', 0)
+        
+        if success:
+            self.info(f"Analysis completed successfully in {total_time:.3f}s using {method} method")
+            self.info(f"Extracted {resources} resources from cookbook")
+        else:
+            self.error(f"Analysis failed after {total_time:.3f}s")
     
-    def _create_analysis_summary(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Create summary of analysis results for logging."""
-        summary = {}
-        
-        # Version requirements summary
-        version_req = analysis.get("version_requirements", {})
-        if version_req:
-            summary["chef_version"] = version_req.get("min_chef_version", "unknown")
-            summary["ruby_version"] = version_req.get("min_ruby_version", "unknown")
-            summary["migration_effort"] = version_req.get("migration_effort", "unknown")
-        
-        # Dependencies summary
-        deps = analysis.get("dependencies", {})
-        if deps:
-            summary["is_wrapper"] = deps.get("is_wrapper", False)
-            summary["dependency_count"] = len(deps.get("direct_deps", []))
-        
-        # Functionality summary
-        func = analysis.get("functionality", {})
-        if func:
-            summary["primary_purpose"] = func.get("primary_purpose", "unknown")
-            summary["reusability"] = func.get("reusability", "unknown")
-        
-        # Recommendations summary
-        rec = analysis.get("recommendations", {})
-        if rec:
-            summary["recommendation"] = rec.get("consolidation_action", "unknown")
-        
-        return summary
+    def log_step_completion(self, step_name: str, step_number: int, total_steps: int):
+        """Log step completion with progress."""
+        progress = (step_number / total_steps) * 100
+        self.info(f"Completed {step_name} ({step_number}/{total_steps} - {progress:.1f}%)")
 
 
 def step_printer(steps: List[Any], logger: Optional[ChefAnalysisLogger] = None):
@@ -277,28 +191,21 @@ def step_printer(steps: List[Any], logger: Optional[ChefAnalysisLogger] = None):
 
 
 def create_chef_logger(correlation_id: str) -> ChefAnalysisLogger:
-    """Factory function to create ChefAnalysisLogger with correlation ID."""
-    return ChefAnalysisLogger(name="chef_analysis", correlation_id=correlation_id)
+    """Create a Chef analysis logger with correlation ID."""
+    return ChefAnalysisLogger(correlation_id)
 
 
-def setup_root_logging():
-    """Setup root logging configuration for the application."""
-    if RICH_AVAILABLE:
-        # Use Rich for beautiful logs
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(message)s",
-            datefmt="[%X]",
-            handlers=[RichHandler(rich_tracebacks=True)]
-        )
-    else:
-        # Fallback to standard logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[logging.StreamHandler(sys.stdout)]
-        )
+def setup_logging(level: str = "INFO") -> None:
+    """Setup basic logging configuration."""
+    logging.basicConfig(
+        level=getattr(logging, level.upper()),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
 
 
-# Global setup
-setup_root_logging()
+def get_logger(name: str) -> logging.Logger:
+    """Get a standard logger."""
+    return logging.getLogger(name)
