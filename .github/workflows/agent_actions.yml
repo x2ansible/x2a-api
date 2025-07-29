@@ -12,7 +12,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   ORG: x2ansible
-  IMAGE_NAME: x2a-api
+  IMAGE_NAME: x2a-api-chef
 
 jobs:
   build-and-push:
@@ -71,7 +71,7 @@ jobs:
         run: |
           podman build \
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-            --label "org.opencontainers.image.description=${{ env.IMAGE_NAME }} API" \
+            --label "org.opencontainers.image.description=${{ env.IMAGE_NAME }} API - Chef Branch" \
             --label "org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.documentation=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.version=${{ steps.version.outputs.SEMANTIC_VERSION }}" \
@@ -80,11 +80,13 @@ jobs:
             --label "org.opencontainers.image.licenses=MIT" \
             --label "org.opencontainers.image.vendor=${{ env.ORG }}" \
             --label "org.opencontainers.image.title=${{ env.IMAGE_NAME }}" \
+            --label "org.opencontainers.image.branch=chef" \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }} \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }} \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }} \
             -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }} \
+            -t ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:chef-latest \
             -f Containerfile .
 
       - name: Push all image tags
@@ -95,6 +97,7 @@ jobs:
           podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}
           podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}
           podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }}
+          podman push ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:chef-latest
           echo " All tags pushed successfully"
 
       - name: Package published successfully
@@ -104,10 +107,11 @@ jobs:
           echo "Package Information:"
           echo "Registry: ${{ env.REGISTRY }}"
           echo "Organization: ${{ env.ORG }}"
-          echo "Package: ${{ env.IMAGE_NAME }}"
+          echo "Package: ${{ env.IMAGE_NAME }} (Chef Branch)"
           echo ""
           echo " Available Tags:"
           echo "  Latest: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
+          echo "  Chef Latest: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:chef-latest"
           echo "  Version: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}"
           echo "  Date: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}"
           echo "  SHA: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}"
@@ -116,6 +120,9 @@ jobs:
           echo "Usage Examples:"
           echo "  # Pull latest version"
           echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
+          echo ""
+          echo "  # Pull chef-specific latest"
+          echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:chef-latest"
           echo ""
           echo "  # Pull specific version"
           echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}"
@@ -153,6 +160,7 @@ jobs:
           echo "| Tag Type | Value | Full Image Reference |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|---------------------|" >> $GITHUB_STEP_SUMMARY
           echo "| Latest | \`latest\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chef Latest | \`chef-latest\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:chef-latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Semantic | \`${{ steps.version.outputs.SEMANTIC_VERSION }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Date | \`${{ steps.version.outputs.DATE_TAG }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.DATE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ steps.version.outputs.SHORT_SHA }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
@@ -167,6 +175,9 @@ jobs:
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
           echo "# Pull latest" >> $GITHUB_STEP_SUMMARY
           echo "podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull chef-specific latest" >> $GITHUB_STEP_SUMMARY
+          echo "podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:chef-latest" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Pull specific version" >> $GITHUB_STEP_SUMMARY
           echo "podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SEMANTIC_VERSION }}" >> $GITHUB_STEP_SUMMARY
