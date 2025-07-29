@@ -29,8 +29,8 @@ class ContentProcessor:
             Tuple of (cleaned_content, error_result_or_none)
             If error_result is not None, processing failed.
         """
-        logger.info(f"📥 Processing playbook: {len(raw_playbook)} chars")
-        logger.info(f"📝 Raw input preview: {repr(raw_playbook[:100])}")
+        logger.info(f"Processing playbook: {len(raw_playbook)} chars")
+        logger.info(f"Raw input preview: {repr(raw_playbook[:100])}")
         
         try:
             # Step 1: Basic cleaning
@@ -51,8 +51,8 @@ class ContentProcessor:
                 if validation_error:
                     return cleaned, validation_error
             
-            logger.info(f"🧹 Content processed successfully: {len(cleaned)} chars")
-            logger.info("🧾 Processed preview (first 10 lines):")
+            logger.info(f"Content processed successfully: {len(cleaned)} chars")
+            logger.info("Processed preview (first 10 lines):")
             for i, line in enumerate(cleaned.split('\n')[:10], 1):
                 logger.info(f"  {i:2d}: {line}")
                 
@@ -74,27 +74,27 @@ class ContentProcessor:
         # Remove triple quotes
         if content.startswith("'''") and content.endswith("'''"):
             content = content[3:-3].strip()
-            logger.info("🧹 Removed triple single quotes")
+            logger.info("Removed triple single quotes")
         elif content.startswith('"""') and content.endswith('"""'):
             content = content[3:-3].strip()
-            logger.info("🧹 Removed triple double quotes")
+            logger.info("Removed triple double quotes")
         # Remove single/double quotes (only for multi-line content)
         elif content.startswith("'") and content.endswith("'") and content.count('\n') > 1:
             content = content[1:-1].strip()
-            logger.info("🧹 Removed single quotes")
+            logger.info("Removed single quotes")
         elif content.startswith('"') and content.endswith('"') and content.count('\n') > 1:
             content = content[1:-1].strip()
-            logger.info("🧹 Removed double quotes")
+            logger.info("Removed double quotes")
         
         if len(content) != original_length:
-            logger.info(f"🧹 Quote removal: {original_length} → {len(content)} chars")
+            logger.info(f"Quote removal: {original_length} → {len(content)} chars")
             
         return content
     
     def _fix_escaped_characters(self, content: str) -> str:
         """Fix JSON-escaped characters from LlamaStack tool calls."""
         if '\\n' in content and content.count('\\n') > content.count('\n'):
-            logger.info("🔧 Fixing escaped newlines and tabs")
+            logger.info("Fixing escaped newlines and tabs")
             content = content.replace('\\n', '\n').replace('\\t', '\t')
         return content
     
@@ -106,7 +106,7 @@ class ContentProcessor:
         # Add single document marker
         if not content.startswith('---'):
             content = '---\n' + content.lstrip()
-            logger.info("📝 Added YAML document marker")
+            logger.info("Added YAML document marker")
         
         return content
     
@@ -140,13 +140,13 @@ class ContentProcessor:
                         f"Play {i+1} must have 'hosts' or 'import_playbook' defined"
                     )
             
-            logger.info(f" YAML pre-validation passed: {len(parsed)} plays found")
+            logger.info(f"YAML pre-validation passed: {len(parsed)} plays found")
             return None
             
         except yaml.YAMLError as e:
             return self._create_validation_error(f"Invalid YAML syntax: {str(e)}")
         except Exception as e:
-            logger.warning(f"⚠️ YAML pre-validation warning: {e}")
+            logger.warning(f"YAML pre-validation warning: {e}")
             return None  # Continue anyway
     
     def _create_validation_error(self, error_message: str) -> dict:
@@ -154,7 +154,7 @@ class ContentProcessor:
         return {
             "validation_passed": False,
             "exit_code": -10,
-            "message": f" YAML validation failed: {error_message}",
+            "message": f"YAML validation failed: {error_message}",
             "summary": {
                 "passed": False,
                 "violations": 1,
@@ -184,7 +184,7 @@ class ContentProcessor:
         return {
             "validation_passed": False,
             "exit_code": -20,
-            "message": f" Content processing failed: {error_message}",
+            "message": f"Content processing failed: {error_message}",
             "summary": {
                 "passed": False,
                 "violations": 1,

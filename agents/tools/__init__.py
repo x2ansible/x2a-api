@@ -34,9 +34,7 @@ try:
 except AssertionError as e:
     logger.error(f" Tool validation failed: {e}")
     # Don't raise - just log the error and continue
-    logger.warning("⚠️ Tool validation failed, but continuing with startup")
+    logger.warning("Tool validation failed, but continuing with startup")
     
 except Exception as e:
-    logger.error(f" Unexpected error validating tools: {e}")
-    # Don't raise - just log the error and continue
-    logger.warning("⚠️ Tool validation error, but continuing with startup") 
+    logger.warning(f"Tool validation failed, but continuing with startup: {e}") 

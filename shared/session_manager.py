@@ -40,10 +40,10 @@ class LlamaStackSessionManager:
                 agent_config = agent.get('agent_config', {})
                 if agent_config.get('name') == agent_name:
                     agent_id = agent.get('agent_id')
-                    logger.info(f"📋 Found agent '{agent_name}': {agent_id}")
+                    logger.info(f"Found agent '{agent_name}': {agent_id}")
                     return agent_id
             
-            logger.warning(f"Agent '{agent_name}' not found in {len(agents)} agents")
+            logger.warning(f"Agent '{agent_name}' not found")
             return None
             
         except Exception as e:
@@ -67,7 +67,7 @@ class LlamaStackSessionManager:
             if response.status_code == 200:
                 data = response.json()
                 sessions = data.get('data', [])
-                logger.info(f"📋 Found {len(sessions)} sessions for agent {agent_id}")
+                logger.info(f"Found {len(sessions)} sessions for agent {agent_id}")
                 return sessions
             else:
                 logger.error(f"Failed to get sessions: HTTP {response.status_code}")
@@ -96,7 +96,7 @@ class LlamaStackSessionManager:
                 return None
                 
             session_data = response.json()
-            logger.debug(f"📋 Retrieved session {session_id} with {len(session_data.get('turns', []))} turns")
+            logger.debug(f"Retrieved session {session_id} with {len(session_data.get('turns', []))} turns")
             return session_data
             
         except Exception as e:
@@ -198,7 +198,7 @@ class LlamaStackSessionManager:
                     session_info['extracted_code'] = code
                     session_info['code_length'] = len(code)
                     sessions_with_code.append(session_info)
-                    logger.info(f"📋 Found code in session: {session_name}")
+                    logger.info(f"Found code in session: {session_name}")
         
         return sessions_with_code
 

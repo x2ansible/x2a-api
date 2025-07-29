@@ -6,16 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from routes.admin import router as admin_router
 from routes.chef import router as chef_router
-from routes.bladelogic import router as bladelogic_router
-from routes.shell import router as shell_router
-from routes.salt import router as salt_router
 from routes.context import router as context_router
-from routes.files import router as files_router
 from routes.generate import router as generate_router
 from routes.validate import router as validate_router
 from routes.vector_db import router as vector_db_router
+from routes.files import router as files_router
 
 from agents.agent import AgentManager
 from config.config import ConfigLoader
@@ -363,49 +359,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("chef_analysis agent not found in config!")
     
-    # === Setup BladeLogicAnalysisAgent ===
-    if "bladelogic_analysis" in registered_agents:
-        from agents.bladelogic_analysis.agent import BladeLogicAnalysisAgent
-        bladelogic_info = registered_agents["bladelogic_analysis"]
-        bladelogic_agent = BladeLogicAnalysisAgent(
-            client=client,
-            agent_id=bladelogic_info["agent_id"],
-            session_id=bladelogic_info["session_id"]
-        )
-        app.state.bladelogic_analysis_agent = bladelogic_agent
-        logger.info(f"BladeLogicAnalysisAgent ready: agent_id={bladelogic_info['agent_id']}")
-    else:
-        logger.warning("bladelogic_analysis agent not found in config!")
-    
-    # === Setup ShellAnalysisAgent ===
-    if "shell_analysis" in registered_agents:
-        from agents.shell_analysis.agent import ShellAnalysisAgent
-        shell_info = registered_agents["shell_analysis"]
-        shell_agent = ShellAnalysisAgent(
-            client=client,
-            agent_id=shell_info["agent_id"],
-            session_id=shell_info["session_id"],
-            config_loader=config_loader
-        )
-        app.state.shell_analysis_agent = shell_agent
-        logger.info(f"ShellAnalysisAgent ready: agent_id={shell_info['agent_id']}")
-    else:
-        logger.warning("shell_analysis agent not found in config!")
-    
-    # === Setup SaltAnalysisAgent ===
-    if "salt_analysis" in registered_agents:
-        from agents.salt_analysis.agent import SaltAnalysisAgent
-        salt_info = registered_agents["salt_analysis"]
-        salt_agent = SaltAnalysisAgent(
-            client=client,
-            agent_id=salt_info["agent_id"],
-            session_id=salt_info["session_id"],
-            config_loader=config_loader
-        )
-        app.state.salt_analysis_agent = salt_agent
-        logger.info(f"SaltAnalysisAgent ready: agent_id={salt_info['agent_id']}")
-    else:
-        logger.warning("salt_analysis agent not found in config!")
+
     
     # === Setup ContextAgent - FIXED FOR TOOLGROUPS ===
     if "context" in registered_agents:
@@ -448,46 +402,68 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("generate agent not found in config!")
     
-    # --- Validation Agent Setup ---
-    validation_info = config_loader.config.get("agents", [])
-    validation_agent_config = None
-    for agent_config in validation_info:
-        if agent_config.get("name") == "validate":
-            validation_agent_config = agent_config
-            break
-    
-    if validation_agent_config:
-        validation_instructions = validation_agent_config.get("instructions", "")
-        toolgroups = validation_agent_config.get("toolgroups", [])
+    # --- Validation Agent Setup (Consistent with other agents) ---
+    if "validate" in registered_agents:
+        validation_info = registered_agents["validate"]
+        validation_instructions = validation_info["config"].get("instructions", "")
         
-        # Verify toolgroups are properly configured
-        if "mcp::ansible_lint" not in toolgroups:
-            logger.warning("ValidationAgent missing 'mcp::ansible_lint' toolgroup - tool calling may not work!")
-        
-        logger.info(f"ValidationAgent toolgroups: {toolgroups}")
-        
-        try:
-            # Create the validation agent with proper tool configuration
-            validation_agent_id = await agent_registry.get_or_create_agent(validation_agent_config)
-            validation_session_id = agent_registry.create_session("validate")
-            
-            app.state.validation_agent = ValidationAgent(
-                client=client,
-                agent_id=validation_agent_id,
-                session_id=validation_session_id,
-                instruction=validation_instructions,
-                verbose_logging=True,
-                timeout=120
-            )
-            logger.info(f"ValidationAgent ready: agent_id={validation_agent_id}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize ValidationAgent: {e}")
-            raise RuntimeError(f"ValidationAgent initialization failed: {e}")
-            
+        app.state.validation_agent = ValidationAgent(
+            client=client,
+            agent_id=validation_info["agent_id"],
+            session_id=validation_info["session_id"],
+            instruction=validation_instructions,
+            config_loader=config_loader,  # Add config_loader
+            verbose_logging=True,
+            timeout=120
+        )
+        logger.info(f"ValidationAgent ready: agent_id={validation_info['agent_id']}")
     else:
-        logger.error("validate agent not found in config!")
-        raise RuntimeError("ValidationAgent configuration missing from config.yaml!")
+        logger.warning("validate agent not found in registered agents!")
+        # Fallback: try to create validation agent if not registered
+        validation_info = config_loader.config.get("agents", [])
+        validation_agent_config = None
+        for agent_config in validation_info:
+            if agent_config.get("name") == "validate":
+                validation_agent_config = agent_config
+                break
+        
+        if validation_agent_config:
+            logger.warning("Creating validation agent as fallback (not in registered agents)")
+            validation_instructions = validation_agent_config.get("instructions", "")
+            
+            try:
+                # Create the validation agent with proper tool configuration
+                validation_agent_id = await agent_registry.get_or_create_agent(validation_agent_config)
+                
+                # If we get the old agent ID, force creation of a new one with client_tools
+                if validation_agent_id == "25cc9c64-f01d-4009-a41f-1b6cfd8fc401":
+                    logger.warning("Got old agent ID without client_tools, forcing new agent creation")
+                    # Force creation of new agent by changing the name temporarily
+                    import uuid
+                    temp_config = validation_agent_config.copy()
+                    temp_config["name"] = f"validate-{uuid.uuid4().hex[:8]}"
+                    validation_agent_id = await agent_registry.get_or_create_agent(temp_config)
+                    logger.info(f"Created new validation agent with ID: {validation_agent_id}")
+                
+                validation_session_id = agent_registry.create_session("validate")
+                
+                app.state.validation_agent = ValidationAgent(
+                    client=client,
+                    agent_id=validation_agent_id,
+                    session_id=validation_session_id,
+                    instruction=validation_instructions,
+                    config_loader=config_loader,  # Add config_loader
+                    verbose_logging=True,
+                    timeout=120
+                )
+                logger.info(f"ValidationAgent ready (fallback): agent_id={validation_agent_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize ValidationAgent: {e}")
+                raise RuntimeError(f"ValidationAgent initialization failed: {e}")
+        else:
+            logger.error("validate agent not found in config!")
+            raise RuntimeError("ValidationAgent configuration missing from config.yaml!")
         
     # --- File upload directory setup ---
     upload_dir = os.getenv("UPLOAD_DIR")
@@ -538,16 +514,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(admin_router, prefix="/api")
 app.include_router(chef_router, prefix="/api")
-app.include_router(bladelogic_router, prefix="/api")
-app.include_router(shell_router, prefix="/api")
-app.include_router(salt_router, prefix="/api")
 app.include_router(context_router, prefix="/api")
-app.include_router(files_router, prefix="/api")
 app.include_router(generate_router, prefix="/api")
 app.include_router(validate_router, prefix="/api")
 app.include_router(vector_db_router, prefix="/api")
+app.include_router(files_router, prefix="/api")
 
 @app.get("/")
 async def root():
@@ -562,21 +534,7 @@ async def root():
         except Exception as e:
             validation_status = {"error": str(e)}
     
-    # Add shell agent status for debugging
-    shell_status = {}
-    if hasattr(app.state, 'shell_analysis_agent'):
-        try:
-            shell_status = app.state.shell_analysis_agent.get_status()
-        except Exception as e:
-            shell_status = {"error": str(e)}
-    
-    # Add salt agent status for debugging
-    salt_status = {}
-    if hasattr(app.state, 'salt_analysis_agent'):
-        try:
-            salt_status = app.state.salt_analysis_agent.get_status()
-        except Exception as e:
-            salt_status = {"error": str(e)}
+
     
     # Add context agent status for debugging
     context_status = {}
@@ -591,9 +549,7 @@ async def root():
         "message": "Welcome to X2A multi-agent API",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Registry-based (All agents including Salt and Shell)",
+        "agent_pattern": "Registry-based (Chef, Context, Generate, Validate)",
         "validation_agent_status": validation_status,
-        "shell_agent_status": shell_status,
-        "salt_agent_status": salt_status,
         "context_agent_status": context_status,
     }

@@ -131,10 +131,10 @@ async def ingest_document(
         finally:
             # Clean up temporary file
             try:
-                os.unlink(temp_file_path)
-                logger.debug(f"🗑️ Cleaned up temporary file: {temp_file_path}")
-            except OSError as e:
-                logger.warning(f"⚠️ Failed to delete temporary file {temp_file_path}: {e}")
+                os.remove(temp_file_path)
+                logger.debug(f"Cleaned up temporary file: {temp_file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file {temp_file_path}: {e}")
                 
     except HTTPException:
         raise
@@ -177,7 +177,7 @@ async def simple_ingest_fallback(content: str, filename: str, file_type: str) ->
         document_id = f"doc_{str(uuid.uuid4())[:8]}_{int(time.time())}"
         
         # Log the ingestion (in real implementation, you'd store this in your vector DB)
-        logger.info(f"📝 Processed {filename}: {len(chunks)} chunks created")
+        logger.info(f"Processed {filename}: {len(chunks)} chunks created")
         
         processing_time = time.time() - start_time
         

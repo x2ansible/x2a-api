@@ -21,28 +21,12 @@ def list_all_agents(llamastack_url):
         data = response.json()
         agents = data.get('data', [])
         
-        print(f"📋 Found {len(agents)} agents in LlamaStack:")
-        print()
-        
-        # Group by name
-        by_name = {}
+        print(f"Found {len(agents)} agents in LlamaStack:")
         for agent in agents:
-            agent_config = agent.get('agent_config', {})
-            name = agent_config.get('name', 'unnamed')
-            if name not in by_name:
-                by_name[name] = []
-            by_name[name].append(agent)
-        
-        for name, agent_list in by_name.items():
-            print(f"🤖 Agent Name: {name} ({len(agent_list)} instances)")
-            for i, agent in enumerate(agent_list):
-                agent_id = agent.get('agent_id', 'unknown')
-                created_at = agent.get('created_at', 'unknown')
-                model = agent.get('agent_config', {}).get('model', 'unknown')
-                print(f"   {i+1}. ID: {agent_id}")
-                print(f"      Model: {model}")
-                print(f"      Created: {created_at}")
-            print()
+            agent_config = agent.get("agent_config", {})
+            name = agent_config.get("name", "UNNAMED")
+            agent_id = agent.get("agent_id", "NO_ID")
+            print(f"  {name}: {agent_id}")
         
         return agents
         
@@ -87,28 +71,23 @@ def delete_duplicate_agents(llamastack_url, keep_latest=True):
             print(f" {name}: Only 1 instance, no duplicates to remove")
             continue
         
-        print(f"🔄 {name}: Found {len(agent_list)} instances, cleaning up...")
+        print(f"{name}: Found {len(agent_list)} instances, cleaning up...")
+        # Keep only the latest (or oldest) instance
+        if keep_latest:
+            # Sort by created_at descending, keep the latest
+            agent_list.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        else:
+            # Sort by created_at ascending, keep the oldest
+            agent_list.sort(key=lambda x: x.get('created_at', ''))
         
-        # Sort by created_at to keep the latest (or earliest)
-        try:
-            sorted_agents = sorted(agent_list, key=lambda x: x.get('created_at', ''), reverse=keep_latest)
-        except:
-            # If sorting fails, just use the list as-is
-            sorted_agents = agent_list
-        
-        # Keep the first one, delete the rest
-        keep_agent = sorted_agents[0]
-        delete_agents = sorted_agents[1:]
-        
-        print(f"   Keeping: {keep_agent.get('agent_id')} (created: {keep_agent.get('created_at')})")
-        
-        for agent in delete_agents:
+        # Delete all but the first one
+        for agent in agent_list[1:]:
             agent_id = agent.get('agent_id')
-            created_at = agent.get('created_at', 'unknown')
-            print(f"   Deleting: {agent_id} (created: {created_at})")
-            
-            if delete_agent(llamastack_url, agent_id):
-                deleted_count += 1
+            if agent_id:
+                delete_agent(llamastack_url, agent_id)
+                print(f"  Deleted: {agent_id}")
+        
+        print(f"  Kept: {agent_list[0].get('agent_id')}")
     
     print(f"\n Cleanup complete! Deleted {deleted_count} duplicate agents")
 
@@ -123,7 +102,7 @@ def delete_all_agents(llamastack_url, confirm=False):
         print(" No agents to delete")
         return
     
-    print(f"🗑️  Deleting ALL {len(agents)} agents...")
+    print(f"Deleting ALL {len(agents)} agents...")
     deleted_count = 0
     
     for agent in agents:
@@ -174,7 +153,7 @@ def main():
         llamastack_url = args.llamastack_url.rstrip('/')
     else:
         llamastack_url = get_llamastack_url_from_config()
-        print(f"🔗 Using LlamaStack URL: {llamastack_url}")
+        print(f"Using LlamaStack URL: {llamastack_url}")
         print("   (Use --llamastack-url to override)")
         print()
     
@@ -182,27 +161,27 @@ def main():
         list_all_agents(llamastack_url)
     
     elif args.delete_duplicates:
-        print("🧹 Deleting duplicate agents (keeping latest)...")
+        print("Deleting duplicate agents (keeping latest)...")
         delete_duplicate_agents(llamastack_url, keep_latest=True)
     
     elif args.delete_duplicates_keep_oldest:
-        print("🧹 Deleting duplicate agents (keeping oldest)...")
+        print("Deleting duplicate agents (keeping oldest)...")
         delete_duplicate_agents(llamastack_url, keep_latest=False)
     
     elif args.delete_all:
-        print("🗑️  Deleting ALL agents...")
+        print("Deleting ALL agents...")
         delete_all_agents(llamastack_url, args.confirm)
     
     elif args.delete_agent:
-        print(f"🗑️  Deleting agent: {args.delete_agent}")
-        delete_agent(llamastack_url, args.delete_agent)
+        print(f"Deleting agent: {args.delete_agent}")
+        if delete_agent(llamastack_url, args.delete_agent):
+            print(f" Successfully deleted agent: {args.delete_agent}")
+        else:
+            print(f" Failed to delete agent: {args.delete_agent}")
     
     else:
-        print("No action specified. Use --list, --delete-duplicates, etc.")
-        print("\nQuick commands:")
-        print("  python agent_manager.py --list")
-        print("  python agent_manager.py --delete-duplicates")
-        print("  python agent_manager.py --delete-all --confirm")
+        print("Listing all agents...")
+        list_all_agents(llamastack_url)
 
 if __name__ == "__main__":
     main()

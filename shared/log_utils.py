@@ -123,21 +123,21 @@ def step_printer(steps: List[Any], logger: Optional[ChefAnalysisLogger] = None):
     print_func = logger.info if logger else print
     
     if logger:
-        logger.info(f"🔄 Processing {len(steps)} agent steps")
+        logger.info(f"Processing {len(steps)} agent steps")
     
     for i, step in enumerate(steps):
         step_type = type(step).__name__
         
         if RICH_AVAILABLE and logger and logger.console:
-            logger.console.print(f"\n[bold blue]{'─' * 10} 📍 Step {i+1}: {step_type} {'─' * 10}[/]")
+            logger.console.print(f"\n[bold blue]{'─' * 10} Step {i+1}: {step_type} {'─' * 10}[/]")
         else:
-            print(f"\n{'-' * 10} 📍 Step {i+1}: {step_type} {'-' * 10}")
+            print(f"\n{'-' * 10} Step {i+1}: {step_type} {'-' * 10}")
         
         if step_type == "ToolExecutionStep":
             if logger:
-                logger.info("🔧 Executing tool...")
+                logger.info("Executing tool...")
             else:
-                print("🔧 Executing tool...")
+                print("Executing tool...")
             
             try:
                 tool_response = step.tool_responses[0].content
@@ -169,20 +169,13 @@ def step_printer(steps: List[Any], logger: Optional[ChefAnalysisLogger] = None):
                     tool_call = step.api_model_response.tool_calls[0]
                     
                     if logger:
-                        logger.info("🛠️ Tool call generated:")
+                        logger.info("Tool call generated:")
+                        logger.info(f"  Tool: {tool_call.tool_name}")
+                        logger.info(f"  Arguments: {tool_call.arguments}")
                     else:
-                        print("🛠️ Tool call Generated:")
-                    
-                    try:
-                        args = json.loads(tool_call.arguments_json)
-                        tool_info = f"Tool call: {tool_call.tool_name}, Arguments: {args}"
-                    except (JSONDecodeError, AttributeError):
-                        tool_info = f"Tool call: {getattr(tool_call, 'tool_name', 'unknown')}"
-                    
-                    if RICH_AVAILABLE:
-                        cprint(tool_info, "magenta")
-                    else:
-                        print(tool_info)
+                        print("Tool call Generated:")
+                        print(f"  Tool: {tool_call.tool_name}")
+                        print(f"  Arguments: {tool_call.arguments}")
     
     if RICH_AVAILABLE and logger and logger.console:
         logger.console.print(f"\n[bold green]{'=' * 10} Query processing completed {'=' * 10}[/]\n")

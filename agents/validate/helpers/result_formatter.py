@@ -34,9 +34,8 @@ class ValidationResultFormatter:
                 validation_result, agent_text, original_playbook, lint_profile, debug_info
             )
         else:
-            return self._format_fallback_result(
-                agent_text, original_playbook, lint_profile, debug_info
-            )
+            logger.warning("Formatting fallback result (no tool result found)")
+            return self._create_fallback_result()
     
     def _format_tool_result(self, validation_result: Dict, agent_text: str,
                            original_playbook: str, lint_profile: str,
@@ -66,7 +65,7 @@ class ValidationResultFormatter:
     def _format_fallback_result(self, agent_text: str, original_playbook: str,
                                lint_profile: str, debug_info: Dict[str, Any]) -> Dict[str, Any]:
         """Format result when tool result wasn't extracted (fallback mode)."""
-        logger.warning("⚠️ Formatting fallback result (no tool result found)")
+        logger.warning("Formatting fallback result (no tool result found)")
         
         # Try to infer result from agent text
         inferred_result = self._infer_result_from_agent_text(agent_text)
@@ -161,7 +160,7 @@ class ValidationResultFormatter:
             "success": False,
             "validation_passed": False,
             "exit_code": -2,
-            "message": f"⏰ {error_message}",
+            "message": f"{error_message}",
             "summary": {
                 "passed": False,
                 "violations": 0,

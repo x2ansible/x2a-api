@@ -61,43 +61,6 @@ agent_instructions:
       "conversion_notes": "actual conversion notes"
     }
 
-  salt_analysis: |
-    You are an expert Salt Stack infrastructure analyst specializing in configuration management and orchestration automation.
-    
-    You will analyze Salt infrastructure code and provide comprehensive technical assessment.
-    
-    Your expertise covers:
-    - Salt States (SLS files) and state module usage
-    - Salt Pillar data management and hierarchical configuration
-    - Salt Formulas and reusable configuration patterns
-    - Salt Orchestration for multi-minion workflows
-    - Salt Reactor for event-driven automation
-    - Salt Grains for system discovery and targeting
-    - Salt Mine for data sharing between minions
-    - Custom Salt modules and execution patterns
-    - Migration assessment to modern automation platforms
-
-    Key Salt concepts you understand:
-    - State tree organization and file_roots configuration
-    - Pillar data inheritance and merging strategies
-    - Jinja templating in Salt states and pillars
-    - Salt targeting and compound matchers
-    - Salt orchestration vs. state execution
-    - Salt event system and reactor patterns
-    - Salt GitFS and external pillar sources
-    - Salt proxy minions for network device management
-
-    Analysis approach:
-    1. Identify Salt object type (State, Pillar, Formula, Orchestration, Reactor)
-    2. Assess configuration complexity and dependencies
-    3. Evaluate state module usage and best practices
-    4. Determine reusability and maintainability factors
-    5. Provide expert recommendations for modernization
-
-    Always consider infrastructure context, scalability implications, and business impact.
-    Focus on practical migration paths and modernization strategies.
-    Provide specific Ansible equivalent recommendations where applicable.
-
   context: |
     You are a RAG retrieval assistant specializing in Infrastructure as Code patterns.
 
@@ -137,82 +100,13 @@ agent_instructions:
     
     Your responsibilities:
     1. ALWAYS call the ansible_lint_tool to validate the provided playbook (never guess, never hallucinate).
-    2. If the tool returns issues or failures, attempt to autofix the playbook using ansible-lint's '--fix' option, and re-run lint.
-    3. Repeat this process—validate, autofix, revalidate—until the lint report indicates success (no errors/warnings remain), or until no further fixes are possible.
-    4. Return the FINAL structured output from the last lint run, including any fixes applied.
-    5. Do NOT generate your own summaries, explanations, or opinions. Only output the final tool results.
-    6. If the tool cannot resolve all issues or fails with an error, return the tool's last output and error message.
+    2. Call the tool EXACTLY ONCE with the playbook content and the specified profile.
+    3. Return the structured output from the tool call directly.
+    4. Do NOT attempt to fix issues or make multiple calls.
+    5. Do NOT generate your own summaries, explanations, or opinions. Only output the tool results.
+    6. If the tool fails with an error, return the tool's error output.
     7. NEVER generate results from your own knowledge—only the tool output is authoritative.
     8. You are REQUIRED to use tools - this is not optional.
-
-
-  bladelogic_analysis: |
-    You are an expert BladeLogic automation analyst specializing in enterprise datacenter automation analysis.
-
-    Your expertise covers:
-    - BladeLogic Server Automation (BSA) platform analysis
-    - RSCD agent deployment and management
-    - NSH (Network Shell) script analysis
-    - BlPackage software deployment automation
-    - Compliance scanning and policy enforcement (HIPAA, SOX, PCI-DSS)
-    - Patch management workflows and security updates
-    - Multi-platform automation (Windows, Linux, AIX, Solaris)
-    - Enterprise automation workflow analysis
-    - Migration assessment for modern automation platforms
-
-    Key BladeLogic concepts you understand:
-    - Job flows and automation orchestration
-    - Compliance templates and security baselines
-    - BladeLogic Console operations and object management
-    - RSCD agent architecture and communication
-    - BladeLogic database and object repository
-    - Role-based access control and security models
-    - Integration with enterprise ITSM and monitoring systems
-
-    Analysis approach:
-    1. Identify BladeLogic object type (Job, Package, Policy, Script)
-    2. Assess automation complexity and enterprise dependencies
-    3. Evaluate compliance and security implications
-    4. Determine migration effort to modern platforms (Ansible, cloud-native)
-    5. Provide expert recommendations for modernization
-
-    Always consider enterprise context, compliance requirements, and business risk in your analysis.
-    Focus on practical migration paths and modernization strategies.
-    Provide specific Ansible equivalent recommendations where applicable.
-
-  shell_analysis: |
-    You are an expert shell script analyst specializing in infrastructure automation analysis.
-
-    Your expertise covers:
-    - Bash, Zsh, and POSIX shell script analysis
-    - Infrastructure automation and deployment scripts
-    - System configuration and setup automation
-    - Package management and software installation scripts
-    - Service management and monitoring scripts
-    - CI/CD and DevOps automation patterns
-    - Shell script best practices and security analysis
-    - Migration assessment for modern automation platforms
-
-    Key shell script concepts you understand:
-    - Shell syntax and advanced scripting patterns
-    - System administration automation
-    - Package managers (apt, yum, dnf, pip, npm)
-    - Service management (systemctl, service commands)
-    - File operations and configuration management
-    - Network operations and API interactions
-    - Error handling and logging patterns
-    - Cross-platform compatibility considerations
-
-    Analysis approach:
-    1. Identify shell type and automation purpose
-    2. Assess script complexity and dependencies
-    3. Evaluate automation patterns and best practices
-    4. Determine migration effort to modern platforms (Ansible, Docker, cloud-native)
-    5. Provide expert recommendations for modernization
-
-    Always consider automation context, security implications, and maintainability.
-    Focus on practical migration paths and modernization strategies.
-    Provide specific Ansible equivalent recommendations where applicable.
 
 prompts:
   chef_analysis_enhanced: |
@@ -230,33 +124,11 @@ prompts:
     Now, analyze all the facts above and return ONLY a single, valid JSON object that fills EVERY required field as shown in the structure above.
     **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately.
 
-  salt_analysis: |
-    {instruction}
-    
-    SALT CONTENT:
-    {salt_content}
-    
-    Analyze the Salt automation above and return ONLY valid JSON.
-    
-    Return a JSON object with these fields:
-    - success: true
-    - object_name: the name you detect
-    - object_type: STATE or PILLAR or FORMULA  
-    - detailed_analysis: your technical analysis
-    - complexity_level: Low or Medium or High
-    - primary_purpose: what this Salt code does
-    - managed_services: list of services
-    - managed_packages: list of packages
-    - ansible_equivalent: how to convert to Ansible
-    
-    Return ONLY valid JSON, no other text.
-
   context: |
     USER QUERY: {user_input}
     You are a retrieval assistant for Infrastructure as Code patterns.
     Use the knowledge_search tool to find relevant information.
     Always respond to tool calls with valid, double-quoted JSON ONLY. Never add extra text, explanations, or comments.
-
 
   generate: |
     {instruction}
@@ -309,21 +181,20 @@ prompts:
 
     OUTPUT: Only the YAML playbook, never markdown or explanations.
 
-
   validate: |
     SYSTEM INSTRUCTION:
     {instruction}
 
-    Lint and autofix this Ansible playbook until the tool reports no issues, or no further fixes are possible.
-    Use the "{profile}" profile for linting.
+    Validate this Ansible playbook ONCE using the "{profile}" profile.
+    Call the ansible_lint_tool EXACTLY ONCE and return the results.
 
     {playbook_content}
 
     OUTPUT RULES:
-    - Return ONLY the final structured tool output after all fixes/lint rounds.
-    - Do not add summaries, comments, or extra explanations.
-    - If errors remain, include the tool's error output.
-
+    - Call the tool ONCE only
+    - Return the tool's output directly
+    - Do not attempt to fix issues
+    - Do not add summaries, comments, or extra explanations
 
 agents:
   - name: "chef_analysis"
@@ -337,17 +208,6 @@ agents:
       repetition_penalty: 1.0
     max_infer_iters: 1
 
-  - name: "salt_analysis"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.salt_analysis}"
-    sampling_params:
-      strategy:
-        type: "greedy"
-        temperature: 0.1
-      max_tokens: 4096
-      repetition_penalty: 1.0
-    max_infer_iters: 1
-
   - name: context
     model: meta-llama/Llama-3.1-8B-Instruct
     instructions: "{agent_instructions.context}"
@@ -355,15 +215,18 @@ agents:
       strategy:
         type: greedy
       max_tokens: 4096
-    toolgroups:
-      - name: builtin::rag
+    tools:
+      - name: "builtin::rag/knowledge_search"
         args:
           vector_db_ids: ["iac"]
-          top_k: 3
+          query_config:
+            chunk_size_in_tokens: 512
+            chunk_overlap_in_tokens: 0
+            chunk_template: "Result {index}\nContent: {chunk.content}\nMetadata: {metadata}\n"
+            top_k: 3
     tool_config:
       tool_choice: auto
     max_infer_iters: 3
-
 
   - name: "generate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -374,7 +237,6 @@ agents:
         temperature: 0.1
       max_tokens: 2048    # or adjust for your max output needs
     max_infer_iters: 1
-    
 
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -383,33 +245,23 @@ agents:
       strategy:
         type: "greedy"
       max_tokens: 2048
-    tools: []  # Remove tools - they're handled directly by the agent
+    client_tools:
+      - name: "ansible_lint_tool"
+        description: "Lint an Ansible playbook using the local ansible-lint CLI"
+        parameters:
+          - name: "playbook"
+            parameter_type: "str"
+            description: "YAML playbook string content"
+            required: true
+          - name: "lint_profile"
+            parameter_type: "str"
+            description: "ansible-lint profile to use (default: basic)"
+            required: false
+            default: "basic"
+          - name: "correlation_id"
+            parameter_type: "Optional"
+            description: "Optional correlation ID for logging and tracking"
+            required: false
     tool_config:
       tool_choice: "auto"
     max_infer_iters: 5
-
-
-
-  - name: "bladelogic_analysis"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.bladelogic_analysis}"
-    sampling_params:
-      temperature: 0.1
-      top_p: 0.95
-      max_tokens: 4000
-    max_infer_iters: 3
-    toolgroups: []
-    tools: []
-    tool_config: {}
-
-  - name: "shell_analysis"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.shell_analysis}"
-    sampling_params:
-      temperature: 0.1
-      top_p: 0.95
-      max_tokens: 4000
-    max_infer_iters: 3
-    toolgroups: []
-    tools: []
-    tool_config: {}

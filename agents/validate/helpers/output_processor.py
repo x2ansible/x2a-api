@@ -100,9 +100,9 @@ class AnsibleLintOutputProcessor:
                         issues.append(issue)
                         
         except Exception as e:
-            logger.warning(f"⚠️ Failed to parse issues from output: {e}")
+            logger.warning(f"Failed to parse issues from output: {e}")
         
-        logger.info(f"📊 Extracted {len(issues)} issues from lint output")
+        logger.info(f"Extracted {len(issues)} issues from lint output")
         return issues
     
     def _parse_rule_violation(self, line: str, line_num: int, stderr: str) -> Dict:
@@ -177,7 +177,7 @@ class AnsibleLintOutputProcessor:
             if recommendation:
                 recommendations.append(recommendation)
         
-        logger.info(f"💡 Generated {len(recommendations)} recommendations")
+        logger.info(f"Generated {len(recommendations)} recommendations")
         return recommendations
     
     def _get_rule_recommendation(self, rule: str, issues: List[Dict]) -> Dict[str, Any]:

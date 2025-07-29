@@ -34,7 +34,7 @@ class ValidationResponseParser:
             logger.error(" No response provided to parser")
             return None, "", {"error": "no_response_provided", "extraction_successful": False}
         
-        logger.info("🔍 Starting direct response parsing")
+        logger.info("Starting direct response parsing")
         
         try:
             agent_text = ""
@@ -49,7 +49,7 @@ class ValidationResponseParser:
                 try:
                     for item in response:
                         events_processed += 1
-                        logger.debug(f"🔍 Processing response item {events_processed}: {type(item)}")
+                        logger.debug(f"Processing response item {events_processed}: {type(item)}")
                         
                         # Try to extract from item
                         result = self._extract_from_response_item(item)
@@ -99,7 +99,7 @@ class ValidationResponseParser:
             }
             
             # Log parsing summary
-            logger.info(f"📋 Direct parsing summary:")
+            logger.info(f"Direct parsing summary:")
             logger.info(f"   - Agent text: {len(agent_text)} chars")
             logger.info(f"   - Tool results found: {len(tool_results)}")
             logger.info(f"   - Events processed: {events_processed}")
@@ -108,9 +108,9 @@ class ValidationResponseParser:
             if validation_result:
                 logger.info(" Successfully extracted validation result!")
             else:
-                logger.warning("⚠️ No validation result found")
+                logger.warning("No validation result found")
                 if tool_results:
-                    logger.debug(f"🔍 Available tool results: {tool_results}")
+                    logger.debug(f"Available tool results: {tool_results}")
             
             return validation_result, agent_text.strip(), debug_info
             
@@ -333,24 +333,24 @@ class ValidationResponseParser:
     def _find_best_validation_result(self, tool_results: List) -> Optional[Dict]:
         """Find the best validation result from collected tool results."""
         for i, tool_result in enumerate(tool_results):
-            logger.debug(f"🔍 Checking tool result {i}: {type(tool_result)}")
+            logger.debug(f"Checking tool result {i}: {type(tool_result)}")
             
             # Direct dict with validation_passed
             if isinstance(tool_result, dict) and 'validation_passed' in tool_result:
-                logger.info(f" Found validation result: passed={tool_result.get('validation_passed')}")
+                logger.info(f"Found validation result: passed={tool_result.get('validation_passed')}")
                 return tool_result
             
             # Check for alternative status fields
             elif isinstance(tool_result, dict) and 'passed' in tool_result:
                 # Convert 'passed' to 'validation_passed' for consistency
                 tool_result['validation_passed'] = tool_result['passed']
-                logger.info(f" Found validation result with 'passed' field: {tool_result.get('passed')}")
+                logger.info(f"Found validation result with 'passed' field: {tool_result.get('passed')}")
                 return tool_result
                 
             # Object with content attribute
             elif hasattr(tool_result, 'content') and isinstance(tool_result.content, dict):
                 if 'validation_passed' in tool_result.content:
-                    logger.info(" Found validation result in content attribute")
+                    logger.info("Found validation result in content attribute")
                     return tool_result.content
         
         return None

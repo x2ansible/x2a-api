@@ -17,11 +17,15 @@ logger = logging.getLogger("CodeGeneratorAgent")
 
 
 def _clean_playbook_output(output: str) -> str:
-    """Clean playbook output - UNCHANGED from your original."""
+    """Clean playbook output - minimal cleaning only."""
     if not output or not output.strip():
         raise ValueError("Empty output received from LLM")
+    
+    # Remove markdown code blocks
     output = re.sub(r"(?m)^(```+|~~~+)[\w\-]*\n?", '', output)
     output = output.strip()
+    
+    # Remove common quote wrappers
     if output.startswith("'''") and output.endswith("'''"):
         output = output[3:-3].strip()
     elif output.startswith('"""') and output.endswith('"""'):
@@ -30,19 +34,27 @@ def _clean_playbook_output(output: str) -> str:
         output = output[1:-1].strip()
     elif output.startswith('"') and output.endswith('"') and output.count('\n') > 1:
         output = output[1:-1].strip()
+    
+    # Fix escaped characters
     output = output.replace('\\n', '\n').replace('\\t', '\t')
+    
+    # Remove leading YAML separators (but don't add them)
     output = re.sub(r"^('?-{3,}'?\n)+", '', output)
-    if not output.startswith('---'):
-        output = '---\n' + output.lstrip()
+    
+    # Ensure proper line ending
     output = output.rstrip() + '\n'
+    
+    # Validate YAML structure without modifying
     lines = output.split('\n')
     yaml_like = False
     for line in lines[1:10]:
         if line.strip() and (':' in line or line.strip().startswith('-')):
             yaml_like = True
             break
+    
     if not yaml_like:
         logger.warning("Generated output doesn't appear to be valid YAML structure")
+    
     return output
 
 
@@ -75,24 +87,12 @@ class CodeGeneratorAgent:
             self.config_loader.config.get("prompts", {}).get("generate", None)
         )
         if not self.prompt_template:
-            # Enhanced fallback with modern examples
+            # Generic fallback without hardcoded examples
             self.prompt_template = (
                 "{instruction}\n\n"
-                "MODERN ANSIBLE EXAMPLE:\n"
-                "---\n"
-                "- name: Example playbook\n"
-                "  hosts: all\n"
-                "  become: true\n"
-                "  tasks:\n"
-                "    - name: Install package\n"
-                "      ansible.builtin.package:\n"
-                "        name: httpd\n"
-                "        state: present\n"
-                "        use: yum\n"
-                "      when: ansible_facts['os_family'] == 'RedHat'\n\n"
                 "[CONTEXT]\n{context}\n\n"
-                "[INPUT CODE]\n{input_code}\n\n"
-                "Generate modern Ansible playbook using FQCN syntax like the example above."
+                "[INPUT CODE TO CONVERT]\n{input_code}\n\n"
+                "Generate modern Ansible playbook using FQCN syntax."
             )
 
         # Configuration flags - UNCHANGED
@@ -128,7 +128,7 @@ class CodeGeneratorAgent:
             return self.session_id
 
     def _analyze_output_quality(self, content: str) -> Dict[str, Any]:
-        """Simple analysis of what the LLM generated - no modifications."""
+        """Analyze what the LLM generated - observational only, no scoring."""
         analysis = {
             "has_fqcn": "ansible.builtin." in content or "community." in content,
             "has_modern_facts": "ansible_facts[" in content,
@@ -137,27 +137,33 @@ class CodeGeneratorAgent:
             "has_become": "become:" in content,
             "has_handlers": "handlers:" in content,
             "line_count": content.count('\n'),
-            "estimated_quality": "unknown"
+            "content_length": len(content),
+            "features_detected": []
         }
         
-        # Simple quality estimation based on modern patterns
-        score = 0
-        if analysis["has_fqcn"]: score += 40
-        if analysis["has_modern_facts"]: score += 20
-        if analysis["starts_with_yaml"]: score += 10
-        if analysis["has_become"]: score += 10
-        if analysis["has_handlers"]: score += 10
-        if analysis["line_count"] > 10: score += 10
+        # Identify detected features
+        if analysis["has_fqcn"]:
+            analysis["features_detected"].append("FQCN modules")
+        if analysis["has_modern_facts"]:
+            analysis["features_detected"].append("Modern facts usage")
+        if analysis["has_collections"]:
+            analysis["features_detected"].append("Collections declaration")
+        if analysis["starts_with_yaml"]:
+            analysis["features_detected"].append("YAML header")
+        if analysis["has_become"]:
+            analysis["features_detected"].append("Privilege escalation")
+        if analysis["has_handlers"]:
+            analysis["features_detected"].append("Handlers")
         
-        if score >= 80:
-            analysis["estimated_quality"] = "high"
-        elif score >= 50:
-            analysis["estimated_quality"] = "medium"
+        # Simple quality assessment based on presence of modern features
+        modern_features_count = len(analysis["features_detected"])
+        if modern_features_count >= 4:
+            analysis["quality_assessment"] = "high_modern_features"
+        elif modern_features_count >= 2:
+            analysis["quality_assessment"] = "medium_modern_features"
         else:
-            analysis["estimated_quality"] = "low"
+            analysis["quality_assessment"] = "basic_features"
             
-        analysis["quality_score"] = score
-        
         return analysis
 
     def _log_generation_inputs(self, input_code: str, context: str, correlation_id: str, prompt: str):
@@ -198,7 +204,7 @@ class CodeGeneratorAgent:
         
         # Analyze what the LLM actually generated
         quality_analysis = self._analyze_output_quality(cleaned_output)
-        self.logger.info(f"LLM output quality: {quality_analysis['estimated_quality']} (score: {quality_analysis['quality_score']}/100)")
+        self.logger.info(f"LLM output quality: {quality_analysis['quality_assessment']} (features: {json.dumps(quality_analysis['features_detected'], indent=2)})")
         self.logger.info(f"Modern features detected: {json.dumps({k: v for k, v in quality_analysis.items() if k.startswith('has_')}, indent=2)}")
         
         if self.detailed_logging:

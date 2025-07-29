@@ -272,9 +272,9 @@ class ChefAnalysisPostprocessor:
         if source == "LLM_WITH_MINIMAL_FALLBACK":
             logger.info(f"[{correlation_id}]  SUCCESS: LLM analysis preserved with minimal fallbacks")
         elif source == "COMPLETE_FALLBACK":
-            logger.warning(f"[{correlation_id}] ⚠️  FALLBACK: Used complete fallback due to LLM failure")
+            logger.warning(f"[{correlation_id}] FALLBACK: Used complete fallback due to LLM failure")
         elif source == "VALIDATION_FALLBACK":
-            logger.warning(f"[{correlation_id}] ⚠️  FALLBACK: Used validation fallback due to Pydantic error")
+            logger.warning(f"[{correlation_id}] FALLBACK: Used validation fallback due to Pydantic error")
 
     def _fill_missing_fields_only(self, parsed: Dict[str, Any], fallback_defaults: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
         """Fill only missing fields - preserve all LLM analysis values"""
@@ -463,7 +463,7 @@ class ChefAnalysisPostprocessor:
         logger.info(f"[{correlation_id}]  LLM values preserved: {llm_preserved_count}")
         logger.info(f"[{correlation_id}]  Fallback values used: {fallback_used_count}")
         llm_percentage = (llm_preserved_count / (llm_preserved_count + fallback_used_count) * 100) if (llm_preserved_count + fallback_used_count) > 0 else 0
-        logger.info(f"[{correlation_id}] 📊 LLM analysis coverage: {llm_percentage:.1f}%")
+        logger.info(f"[{correlation_id}] LLM analysis coverage: {llm_percentage:.1f}%")
 
         return parsed
 
@@ -666,7 +666,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
         
         # Check if we got valid JSON from LLM
         if not parsed:
-            logger.warning(f"[{correlation_id}] ⚠️ No JSON extracted from LLM, using complete fallback")
+            logger.warning(f"[{correlation_id}] No JSON extracted from LLM, using complete fallback")
             result = self._make_complete_response({}, correlation_id, "unknown", fallback_defaults)
             return self._enhance_for_ui_display(result, correlation_id)
 
@@ -719,7 +719,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
 
     def _create_ui_enhancements(self, parsed: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
         """Create comprehensive UI-friendly enhancements"""
-        logger.info(f"[{correlation_id}] 🎨 Creating UI enhancements...")
+        logger.info(f"[{correlation_id}] Creating UI enhancements...")
         
         vr = parsed.get("version_requirements", {})
         func = parsed.get("functionality", {})
@@ -821,16 +821,16 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
         """Create comprehensive migration summary"""
         parts = []
         
-        # Add purpose
-        purpose = func.get("primary_purpose")
+        # Add primary purpose
+        purpose = func.get("primary_purpose", "")
         if purpose:
-            parts.append(f"📋 {purpose}")
+            parts.append(f"{purpose}")
         
         # Add migration effort
-        effort = vr.get("migration_effort")
-        hours = vr.get("estimated_hours")
+        effort = vr.get("migration_effort", "")
         if effort:
-            effort_text = f"🔄 {effort.title()} migration effort"
+            effort_text = f"{effort.title()} migration effort"
+            hours = vr.get("estimated_hours")
             if hours:
                 effort_text += f" (~{hours}h estimated)"
             parts.append(effort_text)
@@ -838,8 +838,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
         # Add recommendation
         action = recs.get("consolidation_action")
         if action:
-            action_emoji = {"REUSE": "♻️", "EXTEND": "🔧", "RECREATE": "🆕"}.get(action, "💡")
-            parts.append(f"{action_emoji} Recommended: {action.title()}")
+            parts.append(f"Recommended: {action.title()}")
         
         return " | ".join(parts) if parts else "Analysis completed successfully"
 
@@ -911,15 +910,15 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
         dependencies = deps.get("direct_deps", [])
         
         if services:
-            details.append(f"🔧 {len(services)} service(s)")
+            details.append(f"{len(services)} service(s)")
         if packages:
-            details.append(f"📦 {len(packages)} package(s)")
+            details.append(f"{len(packages)} package(s)")
         if files:
-            details.append(f"📁 {len(files)} managed file(s)")
+            details.append(f"{len(files)} managed file(s)")
         if customizations:
-            details.append(f"⚙️ {len(customizations)} customization point(s)")
+            details.append(f"{len(customizations)} customization point(s)")
         if dependencies:
-            details.append(f"🔗 {len(dependencies)} dependencies")
+            details.append(f"{len(dependencies)} dependencies")
         
         return " | ".join(details) if details else "Standard Chef cookbook structure"
 
@@ -934,7 +933,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
             readiness_score += 1
             criteria.append(" Chef version requirements identified")
         else:
-            criteria.append("⚠️ Chef version requirements unclear")
+            criteria.append("Chef version requirements unclear")
         
         # Migration effort assessment
         effort = vr.get("migration_effort", "").upper()
@@ -945,7 +944,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
             readiness_score += 1
             criteria.append(" Moderate migration effort")
         else:
-            criteria.append("⚠️ High or unknown migration effort")
+            criteria.append("High or unknown migration effort")
         
         # Functionality clarity
         if func.get("primary_purpose"):
@@ -1088,7 +1087,7 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
 
     def _enhance_for_ui_display(self, result: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
         """Final enhancement pass for optimal UI display"""
-        logger.info(f"[{correlation_id}] 🎨 Final UI display enhancement")
+        logger.info(f"[{correlation_id}] Final UI display enhancement")
         
         # Ensure all display fields have good defaults
         if not result.get("summary") or result["summary"] == "No summary available":

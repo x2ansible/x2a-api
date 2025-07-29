@@ -13,20 +13,14 @@ def step_printer(steps):
     """
     for i, step in enumerate(steps):
         step_type = type(step).__name__
-        print("\n"+"-" * 10, f"📍 Step {i+1}: {step_type}","-" * 10)
+        print("\n"+"-" * 10, f"Step {i+1}: {step_type}","-" * 10)
         if step_type == "ToolExecutionStep":
-            print("🔧 Executing tool...")
+            print("Executing tool...")
             try:
                 pprint(json.loads(step.tool_responses[0].content))
-            except (TypeError, JSONDecodeError):
-                # tool response is not a valid JSON object
-                pprint(step.tool_responses[0].content)
+            except Exception as e:
+                print(f"Error displaying tool response: {e}")
         else:
-            if step.api_model_response.content:
-                print("🤖 Model Response:")
-                cprint(f"{step.api_model_response.content}\n", "magenta")
-            elif step.api_model_response.tool_calls:
-                tool_call = step.api_model_response.tool_calls[0]
-                print("🛠️ Tool call Generated:")
-                cprint(f"Tool call: {tool_call.tool_name}, Arguments: {json.loads(tool_call.arguments_json)}", "magenta")
+            print(f"Step type: {step_type}")
+            print(f"Step content: {step}")
     print("="*10, "Query processing completed","="*10,"\n")

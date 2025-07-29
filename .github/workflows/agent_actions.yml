@@ -2,7 +2,7 @@ name: Build & Publish UBI Image with Podman
 
 on:
   push:
-    branches: [ main ]
+    branches: [ chef ]
   workflow_dispatch:
 
 permissions:
@@ -54,7 +54,7 @@ jobs:
           echo "SEMANTIC_VERSION=${SEMANTIC_VERSION}" >> $GITHUB_OUTPUT
           echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_OUTPUT
           
-          echo "📋 Generated version tags:"
+          echo "Generated version tags:"
           echo "  Semantic Version: ${SEMANTIC_VERSION}"
           echo "  Date Tag: ${DATE_TAG}"
           echo "  Short SHA: ${SHORT_SHA}"
@@ -101,7 +101,7 @@ jobs:
         run: |
           echo " Package published successfully!"
           echo ""
-          echo "📦 Package Information:"
+          echo "Package Information:"
           echo "Registry: ${{ env.REGISTRY }}"
           echo "Organization: ${{ env.ORG }}"
           echo "Package: ${{ env.IMAGE_NAME }}"
@@ -113,7 +113,7 @@ jobs:
           echo "  SHA: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}"
           echo "  Build: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }}"
           echo ""
-          echo "📋 Usage Examples:"
+          echo "Usage Examples:"
           echo "  # Pull latest version"
           echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest"
           echo ""
@@ -126,30 +126,30 @@ jobs:
           echo "  # Pull by commit"
           echo "  podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}"
           echo ""
-          echo "🔧 To make this package public:"
+          echo "To make this package public:"
           echo "1. Visit: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings"
           echo "2. Change 'Package visibility' from Private to Public"
           echo "3. Click 'I understand the consequences, change package visibility'"
           echo ""
-          echo "🔗 Package URL: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}"
+          echo "Package URL: https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}"
 
       - name: Test package accessibility (will fail if private)
         continue-on-error: true
         run: |
-          echo "🧪 Testing package accessibility..."
+          echo "Testing package accessibility..."
           podman logout ${{ env.REGISTRY }} || true
           if podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest; then
             echo " Package is publicly accessible"
           else
-            echo "ℹ️ Package is private (expected for organization packages)"
-            echo "📝 Manual step required to make it public"
+            echo "Package is private (expected for organization packages)"
+            echo "Manual step required to make it public"
           fi
 
       - name: Create deployment summary
         run: |
-          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Image Tags Created" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Tags Created" >> $GITHUB_STEP_SUMMARY
           echo "| Tag Type | Value | Full Image Reference |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|---------------------|" >> $GITHUB_STEP_SUMMARY
           echo "| Latest | \`latest\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest\` |" >> $GITHUB_STEP_SUMMARY
@@ -158,12 +158,12 @@ jobs:
           echo "| Commit | \`${{ steps.version.outputs.SHORT_SHA }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Build | \`build-${{ steps.version.outputs.BUILD_NUMBER }}\` | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:build-${{ steps.version.outputs.BUILD_NUMBER }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
-          echo "- [📦 Package Registry](https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY
-          echo "- [⚙️ Package Settings](https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings)" >> $GITHUB_STEP_SUMMARY
-          echo "- [📋 Repository](https://github.com/${{ github.repository }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Package Registry](https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [Package Settings](https://github.com/orgs/${{ env.ORG }}/packages/container/${{ env.IMAGE_NAME }}/settings)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Repository](https://github.com/${{ github.repository }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📖 Usage" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
           echo "# Pull latest" >> $GITHUB_STEP_SUMMARY
           echo "podman pull ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY

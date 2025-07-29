@@ -87,7 +87,7 @@ def sanitize_yaml(yaml_text, auto_add_handlers=True, dedupe_tasks=False):
                 }
                 for mod in module_keys:
                     if mod not in valid_modules:
-                        logging.warning(f"[sanitize] ⚠️ Unknown module '{mod}' in task: {name}")
+                        logging.warning(f"[sanitize] Unknown module '{mod}' in task: {name}")
 
                 if "service" in task and isinstance(task["service"], dict):
                     svc = task["service"].get("name")
