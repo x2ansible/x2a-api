@@ -1,18 +1,16 @@
-# X2A API 
+# X2A API - Chef to Ansible Conversion
 
 ## Overview
 
-The X2A API is a FastAPI application that provides multiple specialized agents that handle Chef cookbook analysis, code generation, validation, and context retrieval using LlamaStack .
+The X2A API is a FastAPI application that provides specialized agents for converting Chef cookbooks to Ansible playbooks. The system uses LlamaStack for AI-powered analysis, validation, and code generation, specifically focused on Chef to Ansible migration workflows.
 
 ## Architecture
 
-
-
 ### Core Components
 
-- **FastAPI Application**: Multi-agent REST API platform
+- **FastAPI Application**: Multi-agent REST API platform for Chef to Ansible conversion
 - **LlamaStack Integration**: AI analysis engine using `meta-llama/Llama-3.1-8B-Instruct`
-- **MCP Tools**: Model Context Protocol integration for ansible-lint validation
+- **Custom Tools**: Custom ansible-lint tool integration for validation
 - **Gunicorn/Uvicorn**: ASGI server for production deployment
 
 ### Container Image
@@ -20,38 +18,38 @@ The X2A API is a FastAPI application that provides multiple specialized agents t
 The service is packaged using UBI 9 Python 3.11 base image:
 
 ```
-ghcr.io/x2ansible/x2a-api:latest
+ghcr.io/x2ansible/x2a-api-chef:latest
 ```
 
 ## Available Agents
 
 ### 1. Chef Analysis Agent (`/api/chef/*`)
-Analyzes Chef cookbooks for migration planning.
+Analyzes Chef cookbooks for migration planning and conversion to Ansible.
 
 **Features:**
 - Version requirement analysis (Chef/Ruby versions)
 - Dependency mapping and wrapper detection
-- Migration effort estimation
-- Consolidation recommendations
+- Migration effort estimation for Chef to Ansible conversion
+- Consolidation recommendations for Ansible playbook structure
 
 ### 2. Context Agent (`/api/context/*`)
-Retrieves infrastructure context using RAG (Retrieval-Augmented Generation).
+Retrieves infrastructure context using RAG (Retrieval-Augmented Generation) for Chef to Ansible conversion.
 
 **Features:**
 - Knowledge search with vector database (ChromaDB)
-- Best practices retrieval
-- Pattern matching for infrastructure components
+- Best practices retrieval for Ansible playbook creation
+- Pattern matching for infrastructure components during conversion
 
 ### 3. Generate Agent (`/api/generate/*`)
-Generates Ansible playbooks from input code.
+Generates Ansible playbooks from Chef cookbook code.
 
 **Features:**
-- Code conversion (Chef/Puppet → Ansible)
+- Chef to Ansible code conversion
 - Context-aware playbook generation
 - YAML format output without markdown wrappers
 
 ### 4. Validate Agent (`/api/validate/*`)
-Validates Ansible playbooks using MCP ansible-lint integration.
+Validates generated Ansible playbooks using custom ansible-lint tool integration.
 
 **Features:**
 - Multiple validation profiles (basic, moderate, safety, shared, production)
@@ -64,7 +62,7 @@ Validates Ansible playbooks using MCP ansible-lint integration.
 
 ### Chef Analysis
 ```bash
-# Analyze cookbook files
+# Analyze Chef cookbook files for conversion
 POST /api/chef/analyze
 {
   "cookbook_name": "apache-cookbook",
@@ -80,7 +78,7 @@ POST /api/chef/analyze/stream
 
 ### Context Search
 ```bash
-# Search knowledge base
+# Search knowledge base for Chef to Ansible conversion
 POST /api/context/query
 {
   "code": "nginx configuration",
@@ -93,7 +91,7 @@ POST /api/context/query/stream
 
 ### Code Generation
 ```bash
-# Generate Ansible playbook
+# Generate Ansible playbook from Chef code
 POST /api/generate/playbook
 {
   "input_code": "package 'httpd' do\n  action :install\nend",
@@ -106,7 +104,7 @@ POST /api/generate/playbook/stream
 
 ### Playbook Validation
 ```bash
-# Validate playbook with profile
+# Validate generated Ansible playbook with profile
 POST /api/validate/playbook
 {
   "playbook_content": "---\n- name: Test\n  hosts: all\n  tasks: []",
@@ -160,7 +158,7 @@ llamastack:
 agents:
   - name: "chef_analysis_chaining"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "You are an expert Chef cookbook analyst..."
+    instructions: "You are an expert Chef cookbook analyst for Ansible conversion..."
     
   - name: "context"
     model: "meta-llama/Llama-3.1-8B-Instruct"
@@ -178,7 +176,8 @@ agents:
           
   - name: "validate"
     model: "meta-llama/Llama-3.1-8B-Instruct"
-    toolgroups: ["mcp::ansible_lint"]
+    tools:
+      - name: "ansible_lint_tool"
     tool_config:
       tool_choice: "auto"
     max_infer_iters: 5
@@ -233,7 +232,7 @@ GET /api/agents/status
 
 ### Debug Endpoints
 ```bash
-# Check MCP tool availability
+# Check custom tool availability
 GET /api/validate/debug/tools
 
 # Test tool functionality
@@ -298,8 +297,8 @@ http://localhost:8000/docs
 - Reuses existing agents across application restarts
 - Session management per validation request
 
-### MCP Integration
-- Uses Model Context Protocol for ansible-lint
+### Custom Tool Integration
+- Uses custom ansible-lint tool for validation
 - Structured JSON responses from linting tools
 - Profile-based validation rules
 
@@ -340,8 +339,8 @@ http://localhost:8000/docs
 - Use single worker: `-w 1`
 - Check playbook size limits
 
-### MCP Tool Issues
-- Verify ansible-lint toolgroup availability
+### Custom Tool Issues
+- Verify ansible-lint tool availability
 - Check LlamaStack connectivity
 - Review agent configuration
 
