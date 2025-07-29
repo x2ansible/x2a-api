@@ -14,6 +14,11 @@ COPY requirements.txt .
 # Install Python dependencies (these go to site-packages, not your app folder)
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
+# Install ansible-lint for validation agent (system package)
+RUN dnf install -y python3-pip && \
+    pip3 install ansible-lint && \
+    dnf clean all
+
 # Copy your code
 COPY . .
 
