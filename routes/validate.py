@@ -8,13 +8,14 @@ import logging
 from datetime import datetime
 
 from agents.validate.validate_agent import ValidationAgent
+from agents.validate.lg_validation_agent import LangGraphValidationAgent
 
 router = APIRouter(prefix="/validate", tags=["validation"])
 logger = logging.getLogger("validation_routes")
 
 
-def get_validation_agent(request: Request) -> ValidationAgent:
-    """Get ValidationAgent from app state (Registry pattern)"""
+def get_validation_agent(request: Request):
+    """Get ValidationAgent from app state (supports both ValidationAgent and LangGraphValidationAgent)"""
     if not hasattr(request.app.state, 'validation_agent'):
         raise HTTPException(status_code=503, detail="ValidationAgent not available")
     return request.app.state.validation_agent

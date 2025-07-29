@@ -18,6 +18,7 @@ from config.config import ConfigLoader
 from agents.context_agent.context_agent import ContextAgent
 from agents.code_generator.code_generator_agent import CodeGeneratorAgent
 from agents.validate.validate_agent import ValidationAgent
+from agents.validate.lg_validation_agent import LangGraphValidationAgent
 from routes.files import set_upload_dir
 from routes.vector_db import set_vector_db_client
 
@@ -402,68 +403,56 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("generate agent not found in config!")
     
-    # --- Validation Agent Setup (Consistent with other agents) ---
-    if "validate" in registered_agents:
-        validation_info = registered_agents["validate"]
-        validation_instructions = validation_info["config"].get("instructions", "")
-        
-        app.state.validation_agent = ValidationAgent(
+    # --- LangGraph Validation Agent Setup (Default) ---
+    logger.info("Setting up LangGraph Validation Agent as default...")
+    
+    # Get validation instructions from config if available
+    validation_instructions = "Validate Ansible playbooks using ansible-lint"
+    try:
+        validation_info = config_loader.config.get("agents", [])
+        for agent_config in validation_info:
+            if agent_config.get("name") == "validate":
+                validation_instructions = agent_config.get("instructions", validation_instructions)
+                break
+    except Exception as e:
+        logger.warning(f"Could not get validation instructions from config: {e}")
+    
+    try:
+        # Create LangGraph validation agent as default
+        app.state.validation_agent = LangGraphValidationAgent(
             client=client,
-            agent_id=validation_info["agent_id"],
-            session_id=validation_info["session_id"],
+            agent_id="langgraph-validation",
+            session_id="langgraph-session",
             instruction=validation_instructions,
-            config_loader=config_loader,  # Add config_loader
+            config_loader=config_loader,
             verbose_logging=True,
             timeout=120
         )
-        logger.info(f"ValidationAgent ready: agent_id={validation_info['agent_id']}")
-    else:
-        logger.warning("validate agent not found in registered agents!")
-        # Fallback: try to create validation agent if not registered
-        validation_info = config_loader.config.get("agents", [])
-        validation_agent_config = None
-        for agent_config in validation_info:
-            if agent_config.get("name") == "validate":
-                validation_agent_config = agent_config
-                break
-        
-        if validation_agent_config:
-            logger.warning("Creating validation agent as fallback (not in registered agents)")
-            validation_instructions = validation_agent_config.get("instructions", "")
-            
-            try:
-                # Create the validation agent with proper tool configuration
-                validation_agent_id = await agent_registry.get_or_create_agent(validation_agent_config)
-                
-                # If we get the old agent ID, force creation of a new one with client_tools
-                if validation_agent_id == "25cc9c64-f01d-4009-a41f-1b6cfd8fc401":
-                    logger.warning("Got old agent ID without client_tools, forcing new agent creation")
-                    # Force creation of new agent by changing the name temporarily
-                    import uuid
-                    temp_config = validation_agent_config.copy()
-                    temp_config["name"] = f"validate-{uuid.uuid4().hex[:8]}"
-                    validation_agent_id = await agent_registry.get_or_create_agent(temp_config)
-                    logger.info(f"Created new validation agent with ID: {validation_agent_id}")
-                
-                validation_session_id = agent_registry.create_session("validate")
+        logger.info("LangGraph Validation Agent ready (default)")
+    except Exception as e:
+        logger.error(f"Failed to initialize LangGraph Validation Agent: {e}")
+        # Fallback to original ValidationAgent if LangGraph fails
+        logger.warning("Falling back to original ValidationAgent...")
+        try:
+            if "validate" in registered_agents:
+                validation_info = registered_agents["validate"]
+                validation_instructions = validation_info["config"].get("instructions", "")
                 
                 app.state.validation_agent = ValidationAgent(
                     client=client,
-                    agent_id=validation_agent_id,
-                    session_id=validation_session_id,
+                    agent_id=validation_info["agent_id"],
+                    session_id=validation_info["session_id"],
                     instruction=validation_instructions,
-                    config_loader=config_loader,  # Add config_loader
+                    config_loader=config_loader,
                     verbose_logging=True,
                     timeout=120
                 )
-                logger.info(f"ValidationAgent ready (fallback): agent_id={validation_agent_id}")
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize ValidationAgent: {e}")
-                raise RuntimeError(f"ValidationAgent initialization failed: {e}")
-        else:
-            logger.error("validate agent not found in config!")
-            raise RuntimeError("ValidationAgent configuration missing from config.yaml!")
+                logger.info(f"Original ValidationAgent ready (fallback): agent_id={validation_info['agent_id']}")
+            else:
+                raise RuntimeError("No validation agent available")
+        except Exception as fallback_error:
+            logger.error(f"Fallback ValidationAgent also failed: {fallback_error}")
+            raise RuntimeError(f"All validation agents failed to initialize: {e}")
         
     # --- File upload directory setup ---
     upload_dir = os.getenv("UPLOAD_DIR")

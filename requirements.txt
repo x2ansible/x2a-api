@@ -16,6 +16,9 @@ PyYAML>=6.0
 # LlamaStack client
 llama-stack-client
 
+# LangGraph for validation agent
+langgraph>=0.2.0
+
 # MCP (Model Context Protocol) support
 fastmcp
 fire
