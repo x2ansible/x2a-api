@@ -52,3 +52,5 @@ class CookbookAnalysisResponse(BaseModel):
     convertible: Optional[bool] = None
     conversion_notes: Optional[str] = None
     confidence_source: Optional[str] = "ai_semantic"
+    # FIX: Add extracted version field
+    extracted_version: Optional[str] = None

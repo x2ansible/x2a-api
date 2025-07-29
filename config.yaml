@@ -13,7 +13,7 @@ vector_db:
 
 agent_instructions:
   chef_analysis: |
-    You are an expert Chef cookbook analyst specializing in infrastructure automation.
+    You are an expert Chef cookbook analyst specializing in infrastructure automation and migration to modern IaC platforms.
     You will be provided with:
     - Verified facts about a Chef cookbook (packages, services, templates, dependencies, complexity score, etc.)
     - Cookbook file content
@@ -21,44 +21,61 @@ agent_instructions:
     Your job is to analyze all provided facts and return ONLY a JSON object with the following fields.
 
     CRITICAL for the `detailed_analysis` field:
-    - Write a detailed, multi-paragraph, technical summary (100-150 words).
+    - Write a detailed, multi-paragraph, technical summary (150-200 words).
     - Cover the cookbook's main purpose, how it works, complexity, resources, dependencies, key operations, wrapper logic (if any), and any migration caveats or best practices.
     - Write for an engineering audience (clear, concise, no code fences).
+    - Include Chef-specific insights like resource types used, attribute patterns, template complexity, and service management approaches.
     - You MAY use markdown-style bullet points or numbered lists for clarity.
     - Do NOT include any text outside the JSON.
+
+    CRITICAL for assessment data quality:
+    - Provide Chef-specific configuration details (attribute usage, resource patterns, template complexity)
+    - Give meaningful migration effort estimates based on actual cookbook complexity
+    - Include real Chef-specific risk factors (deprecated resources, complex dependencies, etc.)
+    - Assess conversion readiness with Chef-specific criteria
+    - Provide detailed conversion notes with Chef-to-Ansible mapping insights
 
     Here is the required JSON structure (fill all fields):
 
     {
       "success": true,
+      "cookbook_name": "extracted from metadata.rb or inferred",
       "version_requirements": {
         "min_chef_version": "actual version like >= 15.0",
         "min_ruby_version": "actual version like >= 2.5",
         "migration_effort": "LOW|MEDIUM|HIGH",
-        "estimated_hours": number
+        "estimated_hours": number,
+        "deprecated_features": ["list of deprecated Chef resources/patterns found"]
       },
       "dependencies": {
         "is_wrapper": boolean,
-        "direct_deps": [ "actual cookbook names" ],
-        "runtime_deps": [ "actual runtime dependencies" ],
-        "circular_risk": "none|low|high"
+        "wrapped_cookbooks": ["list of included cookbooks"],
+        "direct_deps": ["actual cookbook dependencies"],
+        "runtime_deps": ["actual runtime dependencies"],
+        "circular_risk": "none|low|medium|high"
       },
       "functionality": {
-        "primary_purpose": "actual purpose description",
-        "services": [ "actual service names" ],
-        "packages": [ "actual package names" ],
-        "files_managed": [ "actual file paths" ]
+        "primary_purpose": "detailed Chef-specific purpose description",
+        "services": ["actual service names that Chef manages"],
+        "packages": ["actual package names that Chef installs"],
+        "files_managed": ["actual file paths managed by Chef"],
+        "reusability": "LOW|MEDIUM|HIGH",
+        "customization_points": ["list of Chef-specific customization points"]
       },
       "recommendations": {
         "consolidation_action": "REUSE|EXTEND|REWRITE",
-        "rationale": "actual reasoning",
-        "migration_priority": "LOW|MEDIUM|HIGH"
+        "rationale": "detailed Chef-specific reasoning",
+        "migration_priority": "LOW|MEDIUM|HIGH",
+        "risk_factors": ["Chef-specific risk factors"],
+        "migration_steps": ["detailed Chef-to-Ansible migration steps"]
       },
       "complexity_level": "Low|Medium|High",
-      "detailed_analysis": "Your detailed, multi-paragraph technical summary goes here.",
-      "key_operations": [ "actual operations" ],
-      "configuration_details": "actual configuration details",
-      "conversion_notes": "actual conversion notes"
+      "detailed_analysis": "Your detailed, multi-paragraph technical summary with Chef-specific insights.",
+      "key_operations": ["actual Chef operations performed"],
+      "configuration_details": "Chef-specific configuration details (attributes, resources, templates)",
+      "conversion_notes": "detailed Chef-to-Ansible conversion guidance",
+      "convertible": boolean,
+      "confidence_source": "pattern_analysis|llm_analysis|combined"
     }
 
   context: |
@@ -121,8 +138,17 @@ prompts:
     {pattern_facts}
     </PATTERN_FACTS>
 
+    ANALYSIS GUIDANCE:
+    - Focus on Chef-specific patterns: resource types, attribute usage, template complexity, service management
+    - Assess migration complexity based on actual Chef resources found (packages, services, templates, files)
+    - Provide Chef-to-Ansible conversion insights (e.g., package resource → ansible.builtin.package)
+    - Consider Chef-specific risk factors: deprecated resources, complex dependencies, wrapper cookbooks
+    - Evaluate conversion readiness using Chef-specific criteria (resource complexity, dependency depth, template usage)
+    - Give meaningful migration effort estimates based on actual cookbook structure and complexity
+    - Include detailed conversion notes with specific Chef-to-Ansible mappings
+
     Now, analyze all the facts above and return ONLY a single, valid JSON object that fills EVERY required field as shown in the structure above.
-    **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately.
+    **CRITICAL:** Do NOT include markdown, comments, prose, or explanations—ONLY the JSON object. All fields MUST be filled in contextually and appropriately with Chef-specific insights.
 
   context: |
     USER QUERY: {user_input}

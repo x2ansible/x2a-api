@@ -185,6 +185,7 @@ class PatternAnalyzer:
             r'group\s+["\']([^"\']+)["\']\s+do'
         ]
         
+        # Extract all resources first
         for pattern in package_patterns:
             resources['packages'].extend(re.findall(pattern, content))
         
@@ -205,6 +206,39 @@ class PatternAnalyzer:
         
         for pattern in group_patterns:
             resources['groups'].extend(re.findall(pattern, content))
+        
+        # FIX: Remove duplicates and ensure proper separation
+        # First, remove duplicates within each category
+        for category in resources:
+            resources[category] = list(set(resources[category]))
+        
+        # CRITICAL FIX: Ensure services and packages don't overlap
+        # If an item appears in both services and packages, prioritize based on context
+        services_set = set(resources['services'])
+        packages_set = set(resources['packages'])
+        
+        # Items that appear in both - need to decide which category they belong to
+        overlap = services_set.intersection(packages_set)
+        
+        for item in overlap:
+            # Check if this item is more likely a service or package based on context
+            # Common service names that might also be package names
+            service_indicators = ['nginx', 'apache', 'httpd', 'postgresql', 'mysql', 'redis', 'elasticsearch']
+            
+            if item.lower() in service_indicators:
+                # Keep in services, remove from packages
+                if item in packages_set:
+                    packages_set.remove(item)
+                    resources['packages'] = list(packages_set)
+            else:
+                # Keep in packages, remove from services
+                if item in services_set:
+                    services_set.remove(item)
+                    resources['services'] = list(services_set)
+        
+        # Update the resources with the cleaned sets
+        resources['services'] = list(services_set)
+        resources['packages'] = list(packages_set)
         
         return resources
 
@@ -249,7 +283,15 @@ class PatternAnalyzer:
         for pattern in patterns:
             includes.extend(re.findall(pattern, content))
         
-        return includes
+        # FIX: Remove duplicates while preserving order
+        seen = set()
+        unique_includes = []
+        for item in includes:
+            if item not in seen:
+                seen.add(item)
+                unique_includes.append(item)
+        
+        return unique_includes
 
     # ---- Syntax & Language Detection ----
 

@@ -297,6 +297,12 @@ class ChefAnalysisAgent:
         merged_result["success"] = True
         merged_result["cookbook_name"] = cookbook_name
         
+        # FIX: Extract and propagate cookbook version from metadata
+        extracted_version = "unknown"
+        if pattern_facts.get('pattern_analyzer_enabled', False):
+            extracted_version = pattern_facts["metadata"].get("version", "unknown")
+            step_logger.info(f"[{correlation_id}] Extracted version from metadata: {extracted_version}")
+        
         # Honest reporting of analysis method
         if pattern_facts.get('pattern_analyzer_enabled', False):
             merged_result["analysis_method"] = "pattern_llm"
@@ -316,12 +322,16 @@ class ChefAnalysisAgent:
             merged_result["dependencies"]["is_wrapper"] = pattern_facts["summary"]["is_wrapper"]
             merged_result["dependencies"]["direct_deps"] = pattern_facts["dependencies"]["cookbook_deps"]
             merged_result["dependencies"]["wrapped_cookbooks"] = pattern_facts["dependencies"]["include_recipes"]
+            
+            # FIX: Add extracted version to main response structure
+            merged_result["extracted_version"] = extracted_version
+            
             merged_result["pattern_analyzer_facts"] = {
                 "complexity_score": pattern_facts["summary"]["complexity_score"],
                 "syntax_success_rate": pattern_facts["summary"]["syntax_success_rate"],
                 "total_resources": pattern_facts["summary"]["total_resources"],
                 "extracted_cookbook_name": pattern_facts["metadata"].get("name", "unknown"),
-                "extracted_version": pattern_facts["metadata"].get("version", "unknown"),
+                "extracted_version": extracted_version,
                 "has_metadata": pattern_facts["summary"]["has_metadata"],
                 "extraction_method": pattern_facts["summary"]["extraction_method"],
                 "ast_available": pattern_facts["summary"]["ast_available"],
@@ -330,6 +340,7 @@ class ChefAnalysisAgent:
             step_logger.info(f"[{correlation_id}] Merged {pattern_facts['summary']['total_resources']} resources using {pattern_facts['summary']['extraction_method']} method")
         else:
             step_logger.warning(f"[{correlation_id}] Pattern-based facts unavailable, using LLM analysis only")
+            merged_result["extracted_version"] = "unknown"
             merged_result["pattern_analyzer_facts"] = {
                 "enabled": False, 
                 "reason": "Pattern-based analysis failed",

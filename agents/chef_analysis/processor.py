@@ -30,6 +30,24 @@ class ChefAnalysisPostprocessor:
             "recommendations"
         ]
 
+    def _deduplicate_arrays(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure all arrays in the response contain unique items only"""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, list):
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_items = []
+                    for item in value:
+                        if item not in seen:
+                            seen.add(item)
+                            unique_items.append(item)
+                    data[key] = unique_items
+                elif isinstance(value, dict):
+                    # Recursively deduplicate nested dictionaries
+                    data[key] = self._deduplicate_arrays(value)
+        return data
+
     def _extract_actual_file_paths(self, cookbook_content: str) -> List[str]:
         """Extract actual file paths from cookbook content - only used as fallback"""
         file_paths = []
@@ -207,11 +225,21 @@ class ChefAnalysisPostprocessor:
             response = CookbookAnalysisResponse(**parsed)
             logger.info(f"[{correlation_id}] ✓ Enhanced analysis validated successfully")
             result = response.dict()
+            
+            # FIX: Ensure all arrays contain unique items only
+            result = self._deduplicate_arrays(result)
+            logger.info(f"[{correlation_id}] ✓ Arrays deduplicated successfully")
+            
             self._log_final_response_source(correlation_id, "LLM_WITH_MINIMAL_FALLBACK", result)
             return result
         except Exception as e:
             logger.error(f"[{correlation_id}]  Pydantic validation failed: {e}")
             result = self._make_complete_response(parsed, correlation_id, cookbook_name, fallback_defaults, error=str(e))
+            
+            # FIX: Ensure all arrays contain unique items only (even in fallback)
+            result = self._deduplicate_arrays(result)
+            logger.info(f"[{correlation_id}] ✓ Fallback arrays deduplicated successfully")
+            
             self._log_final_response_source(correlation_id, "VALIDATION_FALLBACK", result)
             return result
 
@@ -702,12 +730,21 @@ def extract_and_validate_analysis(raw_response: str, correlation_id: Optional[st
             # Preserve UI enhancements after validation
             result.update(ui_enhancements)
             
+            # FIX: Ensure all arrays contain unique items only
+            result = self._deduplicate_arrays(result)
+            logger.info(f"[{correlation_id}] ✓ Arrays deduplicated successfully")
+            
             logger.info(f"[{correlation_id}]  Enhanced analysis validated successfully")
             return self._enhance_for_ui_display(result, correlation_id)
             
         except Exception as e:
             logger.error(f"[{correlation_id}]  Pydantic validation failed: {e}")
             result = self._make_complete_response(parsed, correlation_id, cookbook_name, fallback_defaults, error=str(e))
+            
+            # FIX: Ensure all arrays contain unique items only (even in fallback)
+            result = self._deduplicate_arrays(result)
+            logger.info(f"[{correlation_id}] ✓ Fallback arrays deduplicated successfully")
+            
             return self._enhance_for_ui_display(result, correlation_id)
 
     def _ensure_required_sections(self, parsed: Dict[str, Any]) -> None:

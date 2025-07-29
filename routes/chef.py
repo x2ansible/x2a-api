@@ -1,14 +1,60 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
-from pydantic import BaseModel, Field
-from typing import Dict, Optional
-from datetime import datetime
-from fastapi.responses import StreamingResponse
 import asyncio
 import json
+import logging
+import re
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from agents.chef_analysis.agent import ChefAnalysisAgent
 
-router = APIRouter(prefix="/chef", tags=["chef-analysis"])
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/chef", tags=["Chef Analysis"])
+
+
+def extract_cookbook_name_from_metadata(files: Dict[str, str]) -> str:
+    """
+    Extract real cookbook name from metadata.rb file.
+    Falls back to directory name or generated name if metadata.rb is not available.
+    """
+    # First, try to extract from metadata.rb
+    if "metadata.rb" in files:
+        metadata_content = files["metadata.rb"]
+        
+        # Look for name field in metadata.rb
+        name_patterns = [
+            r'name\s+["\']([^"\']+)["\']',
+            r'name\s+["\']([^"\']+)["\']'
+        ]
+        
+        for pattern in name_patterns:
+            matches = re.findall(pattern, metadata_content)
+            if matches:
+                cookbook_name = matches[0].strip()
+                if cookbook_name and cookbook_name != "unknown":
+                    logger.info(f"Extracted cookbook name from metadata.rb: {cookbook_name}")
+                    return cookbook_name
+    
+    # Fallback: try to extract from directory structure or file names
+    # Look for common cookbook directory patterns
+    for filename in files.keys():
+        if filename.startswith("recipes/") or filename.startswith("attributes/"):
+            # Try to extract from the first part of the path
+            parts = filename.split("/")
+            if len(parts) > 1:
+                potential_name = parts[0]
+                if potential_name and potential_name not in ["recipes", "attributes", "templates", "files"]:
+                    logger.info(f"Extracted cookbook name from file structure: {potential_name}")
+                    return potential_name
+    
+    # Final fallback: use timestamp-based name
+    fallback_name = f"uploaded_cookbook_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    logger.info(f"Using fallback cookbook name: {fallback_name}")
+    return fallback_name
+
 
 class ChefAnalyzeRequest(BaseModel):
     files: Dict[str, str] = Field(..., description="Dictionary of filename to file content")
@@ -38,7 +84,8 @@ async def analyze_cookbook(
     """
     Analyze Chef cookbook using standard single-prompt analysis
     """
-    cookbook_name = f"uploaded_cookbook_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # FIX: Extract real cookbook name instead of using generated name
+    cookbook_name = extract_cookbook_name_from_metadata(request.files)
     cookbook_data = {
         "name": cookbook_name,
         "files": request.files,
@@ -70,7 +117,8 @@ async def analyze_cookbook_stream(
     - `final_analysis`: Complete analysis result
     - `error`: Error information
     """
-    cookbook_name = f"stream_cookbook_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # FIX: Extract real cookbook name instead of using generated name
+    cookbook_name = extract_cookbook_name_from_metadata(request.files)
     cookbook_data = {
         "name": cookbook_name,
         "files": request.files,
