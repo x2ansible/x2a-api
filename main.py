@@ -403,11 +403,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("generate agent not found in config!")
     
-    # --- Ansible-lint CLI Validator Setup (Default) ---
-    logger.info("Setting up Ansible-lint CLI Validator as default...")
+    # --- LangGraph ValidationAgent Setup (Default) ---
+    logger.info("Setting up LangGraph ValidationAgent as default...")
     
     # Get validation instructions from config if available
-    validation_instructions = "Validate Ansible playbooks using ansible-lint"
+    validation_instructions = "Validate Ansible playbooks using LangGraph agent"
     try:
         validation_info = config_loader.config.get("agents", [])
         for agent_config in validation_info:
@@ -418,40 +418,36 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Could not get validation instructions from config: {e}")
     
     try:
-        # Create Ansible-lint CLI validator as default
-        app.state.validation_agent = AnsibleLintValidator(
+        # Import and create LangGraph ValidationAgent
+        from agents.validate.validate_agent import ValidationAgent
+        
+        app.state.validation_agent = ValidationAgent(
             client=client,
-            agent_id="ansible-lint-validation",
-            session_id="ansible-lint-session",
+            agent_id="langgraph-validation",
+            session_id="langgraph-session",
             instruction=validation_instructions,
             config_loader=config_loader,
             verbose_logging=True,
             timeout=120
         )
-        logger.info("Ansible-lint CLI Validator ready (default)")
+        logger.info("LangGraph ValidationAgent ready (default)")
     except Exception as e:
-        logger.error(f"Failed to initialize Ansible-lint CLI Validator: {e}")
-        # Fallback to original ValidationAgent if CLI validator fails
-        logger.warning("Falling back to original ValidationAgent...")
+        logger.error(f"Failed to initialize LangGraph ValidationAgent: {e}")
+        # Fallback to AnsibleLintValidator if LangGraph agent fails
+        logger.warning("Falling back to AnsibleLintValidator...")
         try:
-            if "validate" in registered_agents:
-                validation_info = registered_agents["validate"]
-                validation_instructions = validation_info["config"].get("instructions", "")
-                
-                app.state.validation_agent = ValidationAgent(
-                    client=client,
-                    agent_id=validation_info["agent_id"],
-                    session_id=validation_info["session_id"],
-                    instruction=validation_instructions,
-                    config_loader=config_loader,
-                    verbose_logging=True,
-                    timeout=120
-                )
-                logger.info(f"Original ValidationAgent ready (fallback): agent_id={validation_info['agent_id']}")
-            else:
-                raise RuntimeError("No validation agent available")
+            app.state.validation_agent = AnsibleLintValidator(
+                client=client,
+                agent_id="ansible-lint-validation",
+                session_id="ansible-lint-session",
+                instruction="Validate Ansible playbooks using ansible-lint",
+                config_loader=config_loader,
+                verbose_logging=True,
+                timeout=120
+            )
+            logger.info("AnsibleLintValidator ready (fallback)")
         except Exception as fallback_error:
-            logger.error(f"Fallback ValidationAgent also failed: {fallback_error}")
+            logger.error(f"Fallback AnsibleLintValidator also failed: {fallback_error}")
             raise RuntimeError(f"All validation agents failed to initialize: {e}")
         
     # --- File upload directory setup ---

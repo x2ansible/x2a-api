@@ -50,6 +50,18 @@ class ConfigLoader:
             if env_model:
                 config["llamastack"]["default_model"] = env_model
         
+        # Override LLM API base URL if environment variable is set
+        if "llm" not in config:
+            config["llm"] = {}
+        env_llm_api_base = os.getenv("LLM_API_BASE")
+        if env_llm_api_base:
+            config["llm"]["api_base"] = env_llm_api_base
+        
+        # Override LLM model if environment variable is set
+        env_llm_model = os.getenv("LLM_MODEL")
+        if env_llm_model:
+            config["llm"]["model"] = env_llm_model
+        
         # Override file storage upload directory if environment variable is set
         if "file_storage" in config:
             env_upload_dir = os.getenv("UPLOAD_DIR")
@@ -106,6 +118,14 @@ class ConfigLoader:
     def get_llamastack_model(self) -> str:
         """Returns the default LlamaStack model name from config."""
         return self.config["llamastack"].get("default_model", "llama3-8b-instruct")
+    
+    def get_llm_api_base(self) -> str:
+        """Returns the LLM API base URL from config."""
+        return self.config.get("llm", {}).get("api_base", "http://localhost:8000/v1")
+    
+    def get_llm_model(self) -> str:
+        """Returns the LLM model name from config."""
+        return self.config.get("llm", {}).get("model", "meta-llama/Llama-3.1-8B-Instruct")
 
     def get_agents_config(self) -> List[Dict[str, Any]]:
         """
