@@ -2,7 +2,7 @@ import uuid
 import logging
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import UserMessage
-from shared.log_utils import create_chef_logger, step_printer
+from shared.log_utils import create_correlation_logger, step_printer
 from datetime import datetime
 
 class ContextAgent:
@@ -18,7 +18,7 @@ class ContextAgent:
         # Model will be determined from agent configuration, not hard-coded
         
         # Use shared logging utilities with correlation ID
-        self.logger = create_chef_logger("context-agent-init")
+        self.logger = create_correlation_logger("context-agent", "context-agent-init")
 
         self.logger.info("ContextAgent initialized")
         self.logger.info(f"Vector DB: {self.vector_db_id}")
@@ -35,7 +35,7 @@ class ContextAgent:
             )
             session_id = response.session_id
             # Create logger with correlation ID for this session
-            session_logger = create_chef_logger(correlation_id)
+            session_logger = create_correlation_logger("context-agent", correlation_id)
             session_logger.info(f"Created context session: {session_id} for correlation: {correlation_id}")
             return session_id
         except Exception as e:
@@ -47,7 +47,7 @@ class ContextAgent:
         correlation_id = correlation_id or str(uuid.uuid4())
         
         # Create logger with correlation ID for this query
-        query_logger = create_chef_logger(correlation_id)
+        query_logger = create_correlation_logger("context-agent", correlation_id)
         
         query_logger.info(f"Sending query to ContextAgent: {repr(code)[:200]}...")
         query_logger.info(f"Using vector DB: {self.vector_db_id}")
@@ -266,7 +266,7 @@ class ContextAgent:
         correlation_id = correlation_id or str(uuid.uuid4())
         
         # Create logger with correlation ID for this query
-        query_logger = create_chef_logger(correlation_id)
+        query_logger = create_correlation_logger("context-agent", correlation_id)
         
         query_logger.info(f"Starting streaming query: {repr(code)[:200]}...")
         

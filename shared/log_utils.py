@@ -106,14 +106,70 @@ class ChefAnalysisLogger:
         self.info(f"Completed {step_name} ({step_number}/{total_steps} - {progress:.1f}%)")
 
 
-def step_printer(steps: List[Any], logger: Optional[ChefAnalysisLogger] = None):
+class CorrelationLogger:
+    """Generic logger for any agent type with correlation ID tracking."""
+    
+    def __init__(self, agent_name: str, correlation_id: str):
+        self.agent_name = agent_name
+        self.correlation_id = correlation_id
+        self.logger = logging.getLogger(f"{agent_name}_{correlation_id}")
+        self.logger.setLevel(logging.INFO)
+        
+        # Create console handler if not already exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(logging.INFO)
+            
+            # Create formatter
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(correlation_id)s] %(message)s'
+            )
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+        
+        # Add correlation ID to log records
+        for handler in self.logger.handlers:
+            handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(correlation_id)s] %(message)s'
+            ))
+    
+    def _log_with_correlation(self, level: str, message: str):
+        """Log message with correlation ID."""
+        extra = {'correlation_id': self.correlation_id}
+        if level == 'info':
+            self.logger.info(message, extra=extra)
+        elif level == 'warning':
+            self.logger.warning(message, extra=extra)
+        elif level == 'error':
+            self.logger.error(message, extra=extra)
+        elif level == 'debug':
+            self.logger.debug(message, extra=extra)
+    
+    def info(self, message: str):
+        """Log info message."""
+        self._log_with_correlation('info', message)
+    
+    def warning(self, message: str):
+        """Log warning message."""
+        self._log_with_correlation('warning', message)
+    
+    def error(self, message: str):
+        """Log error message."""
+        self._log_with_correlation('error', message)
+    
+    def debug(self, message: str):
+        """Log debug message."""
+        self._log_with_correlation('debug', message)
+
+
+def step_printer(steps: List[Any], logger: Optional[Any] = None):
     """
     Print the steps of an agent's response in a formatted way.
     Enhanced version with Chef Analysis specific logging.
     
     Args:
         steps: List of steps from an agent's response
-        logger: Optional ChefAnalysisLogger instance
+        logger: Optional logger instance (ChefAnalysisLogger or CorrelationLogger)
     """
     if not steps:
         if logger:
@@ -186,6 +242,11 @@ def step_printer(steps: List[Any], logger: Optional[ChefAnalysisLogger] = None):
 def create_chef_logger(correlation_id: str) -> ChefAnalysisLogger:
     """Create a Chef analysis logger with correlation ID."""
     return ChefAnalysisLogger(correlation_id)
+
+
+def create_correlation_logger(agent_name: str, correlation_id: str) -> CorrelationLogger:
+    """Create a generic correlation logger for any agent type."""
+    return CorrelationLogger(agent_name, correlation_id)
 
 
 def setup_logging(level: str = "INFO") -> None:
