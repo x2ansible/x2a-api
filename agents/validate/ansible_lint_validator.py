@@ -195,7 +195,7 @@ class AnsibleLintValidator:
                     "validator_pattern": "cli_tool_wrapper",
                     "json_extracted": True,
                     "tool_names_called": ["ansible_lint_tool"],
-                    "detailed_analysis": "LangGraph execution",
+                    "detailed_analysis": "CLI tool execution",
                     "actual_tool_calls": True
                 },
                 "session_info": {
@@ -212,7 +212,7 @@ class AnsibleLintValidator:
                 "elapsed_time": round(total_time, 3)
             }
             
-            logger.info(f" Ansible-lint CLI validation completed successfully in {total_time:.3f}s")
+            logger.info(f"Ansible-lint CLI validation completed successfully in {total_time:.3f}s")
             return result
 
         except Exception as e:
@@ -331,7 +331,7 @@ class AnsibleLintValidator:
                 "method_used": "cli_validation"
             }
             
-            logger.info(f" Ansible-lint CLI syntax validation completed: {'valid' if syntax_result['syntax_valid'] else 'invalid'}")
+            logger.info(f"Ansible-lint CLI syntax validation completed: {'valid' if syntax_result['syntax_valid'] else 'invalid'}")
             return syntax_result
             
         except Exception as e:
@@ -415,11 +415,11 @@ class AnsibleLintValidator:
             result = await self.validate_playbook(test_playbook, "basic", "health-check")
             
             # If we get here, the validation worked
-            logger.info(" Ansible-lint CLI health check completed successfully")
+            logger.info("Ansible-lint CLI health check completed successfully")
             return True
             
         except Exception as e:
-            logger.error(f" Ansible-lint CLI health check failed: {e}")
+            logger.error(f"Ansible-lint CLI health check failed: {e}")
             return False
 
     def get_status(self) -> Dict[str, Any]:
