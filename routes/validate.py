@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from agents.validate.validate_agent import ValidationAgent
-from agents.validate.lg_validation_agent import LangGraphValidationAgent
+from agents.validate.ansible_lint_validator import AnsibleLintValidator
 
 router = APIRouter(prefix="/validate", tags=["validation"])
 logger = logging.getLogger("validation_routes")

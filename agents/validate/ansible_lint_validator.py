@@ -1,7 +1,6 @@
 import os
 import tempfile
 import subprocess
-import traceback
 import json
 import logging
 import time
@@ -9,14 +8,14 @@ import uuid
 from typing import Optional, Dict, Any, Generator, List
 import asyncio
 
-logger = logging.getLogger("LangGraphValidationAgent")
+logger = logging.getLogger("AnsibleLintValidator")
 
-class LangGraphValidationAgent:
+class AnsibleLintValidator:
     """
-    Simplified LangGraph-based ValidationAgent that provides the same interface as ValidationAgent.
+    Simple CLI-based validator that wraps ansible-lint tool.
     
-    This wraps the lg.py functionality and integrates it into the main app's agent registry.
-    Uses a simplified approach to avoid complex import issues.
+    This provides the same interface as ValidationAgent but uses direct subprocess calls
+    to ansible-lint CLI tool instead of AI agent calls.
     """
     
     def __init__(
@@ -38,8 +37,8 @@ class LangGraphValidationAgent:
         self.timeout = timeout
         self.default_profile = "basic"
         
-        logger.info(f"🔧 LangGraphValidationAgent initialized")
-        logger.info(f"🔧 Agent ID: {agent_id}")
+        logger.info(f"🔧 AnsibleLintValidator initialized")
+        logger.info(f"🔧 Validator ID: {agent_id}")
         logger.info(f"🔧 Session ID: {session_id}")
 
     def _run_ansible_lint_subprocess(self, playbook_code: str) -> dict:
@@ -155,16 +154,16 @@ class LangGraphValidationAgent:
         correlation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Validate an Ansible playbook using simplified LangGraph approach.
+        Validate an Ansible playbook using direct ansible-lint CLI calls.
         """
-        correlation_id = correlation_id or f"lg-val-{uuid.uuid4().hex[:8]}"
+        correlation_id = correlation_id or f"ansible-lint-val-{uuid.uuid4().hex[:8]}"
         start_time = time.monotonic()
         profile = profile or self.default_profile
         
-        logger.info(f"[{correlation_id}] Starting LangGraph playbook validation with profile: {profile}")
+        logger.info(f"[{correlation_id}] Starting ansible-lint CLI validation with profile: {profile}")
         
         try:
-            # Run the validation (simplified LangGraph approach)
+            # Run the validation using direct ansible-lint CLI
             lint_result = self._run_ansible_lint_subprocess(playbook_content)
             
             total_time = time.monotonic() - start_time
@@ -193,7 +192,7 @@ class LangGraphValidationAgent:
                     "tool_execution_steps": 1,
                     "agent_steps": 1,
                     "events_processed": 1,
-                    "agent_pattern": "langgraph_with_ansible_lint",
+                    "validator_pattern": "cli_tool_wrapper",
                     "json_extracted": True,
                     "tool_names_called": ["ansible_lint_tool"],
                     "detailed_analysis": "LangGraph execution",
@@ -203,7 +202,7 @@ class LangGraphValidationAgent:
                     "agent_id": self.agent_id,
                     "session_id": self.session_id,
                     "correlation_id": correlation_id,
-                    "method_used": "langgraph_validation",
+                    "method_used": "cli_validation",
                     "analysis_time_seconds": round(total_time, 3),
                     "registry_agent_id": self.agent_id,
                     "registry_session_id": self.session_id
@@ -213,35 +212,35 @@ class LangGraphValidationAgent:
                 "elapsed_time": round(total_time, 3)
             }
             
-            logger.info(f" LangGraph validation completed successfully in {total_time:.3f}s")
+            logger.info(f" Ansible-lint CLI validation completed successfully in {total_time:.3f}s")
             return result
 
         except Exception as e:
-            logger.error(f"❌ LangGraph validation error: {e}")
-            return self._create_error_response(f"LangGraph validation failed: {str(e)}")
+            logger.error(f"❌ Ansible-lint CLI validation error: {e}")
+            return self._create_error_response(f"Ansible-lint CLI validation failed: {str(e)}")
 
     def validate_playbook_stream(
         self, playbook_content: str, profile: Optional[str] = None
     ) -> Generator[str, None, None]:
         """
         Streams playbook validation results as SSE (Server-Sent Events).
-        Uses LangGraph validation.
+        Uses direct ansible-lint CLI calls.
         """
         t0 = time.monotonic()
         profile = profile or self.default_profile
-        correlation_id = f"lg-stream-{uuid.uuid4().hex[:8]}"
+        correlation_id = f"ansible-lint-stream-{uuid.uuid4().hex[:8]}"
         
-        logger.info(f"[{correlation_id}] Starting LangGraph streaming validation with profile: {profile}")
+        logger.info(f"[{correlation_id}] Starting ansible-lint CLI streaming validation with profile: {profile}")
         
         try:
-            # Run the LangGraph validation
+            # Run the ansible-lint CLI validation
             result = asyncio.run(self.validate_playbook(playbook_content, profile, correlation_id))
             
             # Stream the result
             yield f"data: {json.dumps({'type': 'result', 'data': result, 'elapsed_time': round(time.monotonic() - t0, 2)})}\n\n"
             
         except Exception as e:
-            logger.error(f"[{correlation_id}] LangGraph streaming validation error: {e}")
+            logger.error(f"[{correlation_id}] Ansible-lint CLI streaming validation error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'elapsed_time': round(time.monotonic() - t0, 2)})}\n\n"
         
         # End event
@@ -254,13 +253,13 @@ class LangGraphValidationAgent:
         correlation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Validate multiple Ansible playbook files using LangGraph approach.
+        Validate multiple Ansible playbook files using direct ansible-lint CLI calls.
         """
-        correlation_id = correlation_id or f"lg-multi-{uuid.uuid4().hex[:8]}"
+        correlation_id = correlation_id or f"ansible-lint-multi-{uuid.uuid4().hex[:8]}"
         start_time = time.monotonic()
         profile = profile or self.default_profile
         
-        logger.info(f"[{correlation_id}] Starting LangGraph multiple file validation with profile: {profile}")
+        logger.info(f"[{correlation_id}] Starting ansible-lint CLI multiple file validation with profile: {profile}")
         
         results = {}
         total_issues = 0
@@ -294,10 +293,10 @@ class LangGraphValidationAgent:
             "correlation_id": correlation_id,
             "elapsed_time": round(time.monotonic() - start_time, 2),
             "profile": profile,
-            "agentic": True,
+            "tool_based": True,
         }
         
-        logger.info(f"[{correlation_id}] LangGraph multiple file validation completed: {total_passed}/{len(files)} files passed")
+        logger.info(f"[{correlation_id}] Ansible-lint CLI multiple file validation completed: {total_passed}/{len(files)} files passed")
         return overall_result
 
     async def validate_syntax(
@@ -306,12 +305,12 @@ class LangGraphValidationAgent:
         correlation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Quick syntax validation of an Ansible playbook using LangGraph.
+        Quick syntax validation of an Ansible playbook using direct ansible-lint CLI calls.
         """
-        correlation_id = correlation_id or f"lg-syntax-{uuid.uuid4().hex[:8]}"
+        correlation_id = correlation_id or f"ansible-lint-syntax-{uuid.uuid4().hex[:8]}"
         start_time = time.monotonic()
         
-        logger.info(f"[{correlation_id}] Starting LangGraph syntax validation")
+        logger.info(f"[{correlation_id}] Starting ansible-lint CLI syntax validation")
         
         try:
             # Use the same validation logic but with basic profile
@@ -327,16 +326,16 @@ class LangGraphValidationAgent:
                 "session_id": self.session_id,
                 "correlation_id": correlation_id,
                 "elapsed_time": round(time.monotonic() - start_time, 3),
-                "agentic": True,
+                "tool_based": True,
                 "tool_called": True,
-                "method_used": "langgraph_validation"
+                "method_used": "cli_validation"
             }
             
-            logger.info(f" LangGraph syntax validation completed: {'valid' if syntax_result['syntax_valid'] else 'invalid'}")
+            logger.info(f" Ansible-lint CLI syntax validation completed: {'valid' if syntax_result['syntax_valid'] else 'invalid'}")
             return syntax_result
             
         except Exception as e:
-            logger.error(f"[{correlation_id}] LangGraph syntax validation failed: {e}")
+            logger.error(f"[{correlation_id}] Ansible-lint CLI syntax validation failed: {e}")
             return {
                 "syntax_valid": False,
                 "issues": [],
@@ -346,7 +345,7 @@ class LangGraphValidationAgent:
                 "session_id": self.session_id,
                 "correlation_id": correlation_id,
                 "elapsed_time": round(time.monotonic() - start_time, 3),
-                "agentic": True,
+                "tool_based": True,
                 "error": str(e),
             }
 
@@ -356,12 +355,12 @@ class LangGraphValidationAgent:
         correlation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Production-ready validation with strict profile using LangGraph approach.
+        Production-ready validation with strict profile using direct ansible-lint CLI calls.
         """
-        correlation_id = correlation_id or f"lg-prod-{uuid.uuid4().hex[:8]}"
+        correlation_id = correlation_id or f"ansible-lint-prod-{uuid.uuid4().hex[:8]}"
         start_time = time.monotonic()
         
-        logger.info(f"[{correlation_id}] Starting LangGraph production validation")
+        logger.info(f"[{correlation_id}] Starting ansible-lint CLI production validation")
         
         try:
             # Use the same validation logic but with production profile
@@ -371,15 +370,15 @@ class LangGraphValidationAgent:
             result.update({
                 "production_ready": result.get("validation_passed", False),
                 "validation_level": "production",
-                "agentic": True,
+                "tool_based": True,
                 "tool_called": True,
             })
             
-            logger.info(f"[{correlation_id}] LangGraph production validation completed: {'ready' if result['production_ready'] else 'not ready'}")
+            logger.info(f"[{correlation_id}] Ansible-lint CLI production validation completed: {'ready' if result['production_ready'] else 'not ready'}")
             return result
             
         except Exception as e:
-            logger.error(f"[{correlation_id}] LangGraph production validation failed: {e}")
+            logger.error(f"[{correlation_id}] Ansible-lint CLI production validation failed: {e}")
             return {
                 "production_ready": False,
                 "validation_level": "production",
@@ -391,7 +390,7 @@ class LangGraphValidationAgent:
                 "validation_passed": False,
                 "issues": [],
                 "issues_count": 0,
-                "agentic": True,
+                "tool_based": True,
                 "error": str(e),
             }
 
@@ -401,7 +400,7 @@ class LangGraphValidationAgent:
 
     async def health_check(self) -> bool:
         """
-        Perform a basic health check using LangGraph validation.
+        Perform a basic health check using ansible-lint CLI validation.
         """
         try:
             test_playbook = """---
@@ -416,25 +415,25 @@ class LangGraphValidationAgent:
             result = await self.validate_playbook(test_playbook, "basic", "health-check")
             
             # If we get here, the validation worked
-            logger.info(" LangGraph health check completed successfully")
+            logger.info(" Ansible-lint CLI health check completed successfully")
             return True
             
         except Exception as e:
-            logger.error(f" LangGraph health check failed: {e}")
+            logger.error(f" Ansible-lint CLI health check failed: {e}")
             return False
 
     def get_status(self) -> Dict[str, Any]:
         """Get agent status information."""
         return {
-            "agent_id": self.agent_id,
+            "validator_id": self.agent_id,
             "session_id": self.session_id,
-            "client_base_url": "langgraph-local",
+            "client_base_url": "cli-local",
             "timeout": self.timeout,
             "status": "ready",
-            "approach": "langgraph_validation",
-            "methods_available": ["langgraph_validation"],
+            "approach": "cli_tool_wrapper",
+            "methods_available": ["cli_validation"],
             "capabilities": [
-                "langgraph_tool_calling",
+                "cli_tool_calling",
                 "json_response_parsing",
                 "streaming_validation",
                 "ansible_lint_integration"
@@ -442,10 +441,10 @@ class LangGraphValidationAgent:
             "tools_registered": [
                 "ansible_lint_tool"
             ],
-            "agent_pattern": "langgraph_with_ansible_lint",
-            "registry_agent_id": self.agent_id,
+            "validator_pattern": "cli_tool_wrapper",
+            "registry_validator_id": self.agent_id,
             "registry_session_id": self.session_id,
-            "langgraph_managed": True
+            "cli_managed": True
         }
 
     def _create_error_response(self, message: str) -> Dict[str, Any]:
