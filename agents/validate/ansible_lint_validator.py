@@ -20,9 +20,9 @@ class AnsibleLintValidator:
     
     def __init__(
         self,
-        client=None,  # Not used for LangGraph
-        agent_id: str = "langgraph-validation",
-        session_id: str = "langgraph-session",
+        client=None,  # Not used for CLI validator
+        agent_id: str = "ansible-lint-validation",
+        session_id: str = "ansible-lint-session",
         instruction: str = "Validate Ansible playbooks using ansible-lint",
         config_loader=None,
         verbose_logging: bool = False,

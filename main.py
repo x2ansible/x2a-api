@@ -403,8 +403,8 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("generate agent not found in config!")
     
-    # --- Ansible-lint CLI Validation Agent Setup (Default) ---
-    logger.info("Setting up Ansible-lint CLI Validation Agent as default...")
+    # --- Ansible-lint CLI Validator Setup (Default) ---
+    logger.info("Setting up Ansible-lint CLI Validator as default...")
     
     # Get validation instructions from config if available
     validation_instructions = "Validate Ansible playbooks using ansible-lint"
@@ -431,7 +431,7 @@ async def lifespan(app: FastAPI):
         logger.info("Ansible-lint CLI Validator ready (default)")
     except Exception as e:
         logger.error(f"Failed to initialize Ansible-lint CLI Validator: {e}")
-        # Fallback to original ValidationAgent if CLI agent fails
+        # Fallback to original ValidationAgent if CLI validator fails
         logger.warning("Falling back to original ValidationAgent...")
         try:
             if "validate" in registered_agents:
