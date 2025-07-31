@@ -246,7 +246,7 @@ agents:
       strategy:
         type: greedy
       max_tokens: 4096
-    tools:
+    toolgroups:
       - name: "builtin::rag/knowledge_search"
         args:
           vector_db_ids: ["iac"]
