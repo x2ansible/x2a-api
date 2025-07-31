@@ -7,8 +7,9 @@ import json
 import logging
 from datetime import datetime
 
-from agents.validate.validate_agent import ValidationAgent
-from agents.validate.ansible_lint_validator import AnsibleLintValidator
+# Import your ValidationAgent class - adjust path as needed
+# from agents.validate.validate_agent import ValidationAgent
+# from agents.validate.ansible_lint_validator import AnsibleLintValidator
 
 router = APIRouter(prefix="/validate", tags=["validation"])
 logger = logging.getLogger("validation_routes")
@@ -37,7 +38,7 @@ class ValidateSyntaxRequest(BaseModel):
 @router.post("/playbook")
 async def validate_playbook(
     request: ValidateRequest,
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     """Validate an Ansible playbook using custom ansible-lint tool with timeout handling"""
     try:
@@ -47,11 +48,18 @@ async def validate_playbook(
                 status_code=413,
                 detail=f"Playbook too large ({len(request.playbook_content)} chars). Maximum size: {max_size} characters"
             )
-        if request.profile not in agent.get_supported_profiles():
+        
+        # Check if agent supports get_supported_profiles method
+        supported_profiles = ["basic", "production"]  # default
+        if hasattr(agent, 'get_supported_profiles'):
+            supported_profiles = agent.get_supported_profiles()
+        
+        if request.profile not in supported_profiles:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported profile: {request.profile}. Supported: {agent.get_supported_profiles()}"
+                detail=f"Unsupported profile: {request.profile}. Supported: {supported_profiles}"
             )
+        
         try:
             result = await asyncio.wait_for(
                 agent.validate_playbook(
@@ -67,6 +75,7 @@ async def validate_playbook(
                 detail=f"Validation request timed out after 2 minutes. Try with a smaller playbook or 'basic' profile."
             )
 
+        # Handle timeout flag in result
         if result.get("timeout"):
             raise HTTPException(
                 status_code=408,
@@ -84,7 +93,8 @@ async def validate_playbook(
                 "passed": result.get("passed", False),
                 "pattern": "Registry-based",
                 "agent_id": result.get("agent_id", "unknown"),
-                "elapsed_time": result.get("elapsed_time", 0)
+                "elapsed_time": result.get("elapsed_time", 0),
+                "timeout": result.get("timeout", False)
             }
         }
     except HTTPException:
@@ -96,7 +106,7 @@ async def validate_playbook(
 @router.post("/playbook/stream")
 async def validate_playbook_stream(
     request: ValidateRequest,
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     """Stream playbook validation results with timeout handling (event-stream)"""
     max_size = 50000
@@ -111,7 +121,13 @@ async def validate_playbook_stream(
                 "Connection": "keep-alive",
             },
         )
-    if request.profile not in agent.get_supported_profiles():
+    
+    # Check supported profiles
+    supported_profiles = ["basic", "production"]  # default
+    if hasattr(agent, 'get_supported_profiles'):
+        supported_profiles = agent.get_supported_profiles()
+    
+    if request.profile not in supported_profiles:
         def profile_error_generator():
             yield f"data: {json.dumps({'type': 'error', 'error': f'Unsupported profile: {request.profile}'})}\n\n"
         return StreamingResponse(
@@ -123,7 +139,20 @@ async def validate_playbook_stream(
             },
         )
 
-    # --- KEY: Pass the sync generator directly! ---
+    # Check if agent has streaming support
+    if not hasattr(agent, 'validate_playbook_stream'):
+        def no_stream_error_generator():
+            yield f"data: {json.dumps({'type': 'error', 'error': 'Agent does not support streaming'})}\n\n"
+        return StreamingResponse(
+            no_stream_error_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # Pass the sync generator directly
     return StreamingResponse(
         agent.validate_playbook_stream(
             playbook_content=request.playbook_content,
@@ -139,7 +168,7 @@ async def validate_playbook_stream(
 @router.post("/multiple")
 async def validate_multiple_playbooks(
     request: ValidateMultipleRequest,
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     try:
         if not request.files:
@@ -151,11 +180,18 @@ async def validate_multiple_playbooks(
                 status_code=413,
                 detail=f"Total files too large ({total_size} chars). Maximum total size: {max_total_size} characters"
             )
-        if request.profile not in agent.get_supported_profiles():
+        
+        # Check supported profiles
+        supported_profiles = ["basic", "production"]  # default
+        if hasattr(agent, 'get_supported_profiles'):
+            supported_profiles = agent.get_supported_profiles()
+        
+        if request.profile not in supported_profiles:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported profile: {request.profile}. Supported: {agent.get_supported_profiles()}"
+                detail=f"Unsupported profile: {request.profile}. Supported: {supported_profiles}"
             )
+        
         try:
             results = await asyncio.wait_for(
                 agent.validate_multiple_files(
@@ -169,9 +205,11 @@ async def validate_multiple_playbooks(
                 status_code=408,
                 detail="Multiple file validation timed out after 5 minutes"
             )
+        
         total_files = len(results)
         passed_files = sum(1 for r in results.values() if r.get("passed", False))
         total_issues = sum(r.get("issues_count", 0) for r in results.values())
+        
         return {
             "success": True,
             "results": results,
@@ -199,7 +237,7 @@ async def validate_multiple_playbooks(
 @router.post("/syntax")
 async def validate_syntax(
     request: ValidateSyntaxRequest,
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     try:
         max_size = 25000
@@ -222,14 +260,15 @@ async def validate_syntax(
             "success": True,
             "syntax_valid": result.get("passed", False),
             "issues": result.get("issues", []),
-            "formatted_issues": result.get("formatted_issues", ""),
+            "formatted_issues": result.get("formatted_issues", result.get("summary", "")),
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
                 "validation_type": "syntax_check",
                 "issues_count": result.get("issues_count", 0),
                 "pattern": "Registry-based",
                 "agent_id": result.get("agent_id", "unknown"),
-                "elapsed_time": result.get("elapsed_time", 0)
+                "elapsed_time": result.get("elapsed_time", 0),
+                "timeout": result.get("timeout", False)
             }
         }
     except HTTPException:
@@ -241,7 +280,7 @@ async def validate_syntax(
 @router.post("/production")
 async def production_validate(
     request: ValidateRequest,
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     try:
         max_size = 30000
@@ -271,7 +310,8 @@ async def production_validate(
                 "issues_found": result.get("issues_count", 0),
                 "pattern": "Registry-based",
                 "agent_id": result.get("agent_id", "unknown"),
-                "elapsed_time": result.get("elapsed_time", 0)
+                "elapsed_time": result.get("elapsed_time", 0),
+                "timeout": result.get("timeout", False)
             }
         }
     except HTTPException:
@@ -284,13 +324,23 @@ async def production_validate(
 
 @router.get("/status")
 async def get_validation_status(
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     try:
+        # Get supported profiles safely
+        supported_profiles = ["basic", "production"]  # default
+        if hasattr(agent, 'get_supported_profiles'):
+            supported_profiles = agent.get_supported_profiles()
+        
+        # Get agent status safely
+        agent_info = {"status": "ready", "type": "ValidationAgent"}
+        if hasattr(agent, 'get_status'):
+            agent_info = agent.get_status()
+        
         return {
             "status": "ready",
-            "agent_info": agent.get_status(),
-            "supported_profiles": agent.get_supported_profiles(),
+            "agent_info": agent_info,
+            "supported_profiles": supported_profiles,
             "limits": {
                 "max_playbook_size": 50000,
                 "max_syntax_size": 25000,
@@ -311,13 +361,24 @@ async def get_validation_status(
 
 @router.post("/health")
 async def validation_health_check(
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     try:
-        is_healthy = await asyncio.wait_for(
-            agent.health_check(),
-            timeout=30
-        )
+        is_healthy = False
+        if hasattr(agent, 'health_check'):
+            is_healthy = await asyncio.wait_for(
+                agent.health_check(),
+                timeout=30
+            )
+        else:
+            # Basic health check - try to get status
+            try:
+                if hasattr(agent, 'get_status'):
+                    agent.get_status()
+                    is_healthy = True
+            except Exception:
+                is_healthy = False
+        
         return {
             "healthy": is_healthy,
             "agent_id": getattr(agent, 'agent_id', 'unknown'),
@@ -344,10 +405,15 @@ async def validation_health_check(
 
 @router.get("/profiles")
 async def get_supported_profiles(
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
+    # Get supported profiles safely
+    supported_profiles = ["basic", "production"]  # default
+    if hasattr(agent, 'get_supported_profiles'):
+        supported_profiles = agent.get_supported_profiles()
+    
     return {
-        "profiles": agent.get_supported_profiles(),
+        "profiles": supported_profiles,
         "descriptions": {
             "basic": "Basic syntax and structure validation",
             "production": "Strict production-ready validation"
@@ -368,17 +434,26 @@ async def get_supported_profiles(
 
 @router.get("/agent-info")
 async def get_agent_info(
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     try:
-        status_info = agent.get_status()
+        # Get agent status safely
+        status_info = {"status": "ready", "type": "ValidationAgent"}
+        if hasattr(agent, 'get_status'):
+            status_info = agent.get_status()
+        
+        # Get supported profiles safely
+        supported_profiles = ["basic", "production"]  # default
+        if hasattr(agent, 'get_supported_profiles'):
+            supported_profiles = agent.get_supported_profiles()
+        
         return {
             "agent_details": status_info,
             "capabilities": {
-                "validation_profiles": agent.get_supported_profiles(),
-                "streaming_support": True,
-                "multiple_file_support": True,
-                "health_check_support": True,
+                "validation_profiles": supported_profiles,
+                "streaming_support": hasattr(agent, 'validate_playbook_stream'),
+                "multiple_file_support": hasattr(agent, 'validate_multiple_files'),
+                "health_check_support": hasattr(agent, 'health_check'),
                 "timeout_handling": True,
                 "size_limits": True
             },
@@ -416,7 +491,7 @@ async def get_agent_info(
 
 @router.post("/test")
 async def test_validation(
-    agent: ValidationAgent = Depends(get_validation_agent),
+    agent = Depends(get_validation_agent),
 ):
     test_playbook = """---
 - name: Test playbook
@@ -447,7 +522,8 @@ async def test_validation(
                 "timestamp": datetime.now().isoformat(),
                 "test_type": "sample_validation",
                 "pattern": "Registry-based with timeout handling",
-                "elapsed_time": result.get("elapsed_time", 0)
+                "elapsed_time": result.get("elapsed_time", 0),
+                "timeout": result.get("timeout", False)
             }
         }
     except asyncio.TimeoutError:

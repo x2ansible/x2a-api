@@ -28,9 +28,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-config_loader = ConfigLoader("config.yaml")
-llamastack_base_url = config_loader.get_llamastack_base_url()
-agents_config = config_loader.get_agents_config()
+# Initialize config loader with error handling
+try:
+    config_loader = ConfigLoader("config.yaml")
+    llamastack_base_url = config_loader.get_llamastack_base_url()
+    agents_config = config_loader.get_agents_config()
+except Exception as e:
+    logger.error(f"Failed to load configuration: {e}")
+    raise RuntimeError(f"Configuration loading failed: {e}")
 
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types.agent_create_params import AgentConfig
@@ -239,13 +244,17 @@ async def lifespan(app: FastAPI):
     global agent_registry
     logger.info("Starting X2A Agents API ...")
 
-    client = LlamaStackClient(base_url=llamastack_base_url)
-    agent_registry = AgentRegistry(client)
-    app.state.client = client
-    app.state.agent_registry = agent_registry
-    app.state.config_loader = config_loader
+    try:
+        client = LlamaStackClient(base_url=llamastack_base_url)
+        agent_registry = AgentRegistry(client)
+        app.state.client = client
+        app.state.agent_registry = agent_registry
+        app.state.config_loader = config_loader
 
-    logger.info(f"Connected to LlamaStack: {llamastack_base_url}")
+        logger.info(f"Connected to LlamaStack: {llamastack_base_url}")
+    except Exception as e:
+        logger.error(f"Failed to connect to LlamaStack: {e}")
+        raise RuntimeError(f"LlamaStack connection failed: {e}")
     
     # === DEBUG SECTION - Add this to see what's happening ===
     logger.info("Loading agent configurations...")
@@ -283,6 +292,7 @@ async def lifespan(app: FastAPI):
 
     registered_agents = {}
 
+    # Register LlamaStack agents with error handling
     for i, agent_config in enumerate(agents_config):
         agent_name = agent_config["name"]
         logger.info(f"Setting up agent {i+1}/{len(agents_config)}: {agent_name}...")
@@ -297,7 +307,8 @@ async def lifespan(app: FastAPI):
             logger.info(f"Agent {i+1}/{len(agents_config)} ready: {agent_name} (ID: {agent_id})")
         except Exception as e:
             logger.error(f"Failed to setup agent {i+1}/{len(agents_config)}: {agent_name} - {e}")
-            raise
+            # Don't raise here - continue with other agents
+            continue
 
     # === FINAL VERIFICATION ===
     logger.info(f"Registration Summary:")
@@ -330,8 +341,14 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Could not verify final LlamaStack agents: {e}")
 
     app.state.registered_agents = registered_agents
-    agent_manager = AgentManager(llamastack_base_url)
-    app.state.agent_manager = agent_manager
+    
+    # Initialize AgentManager with error handling
+    try:
+        agent_manager = AgentManager(llamastack_base_url)
+        app.state.agent_manager = agent_manager
+    except Exception as e:
+        logger.warning(f"Failed to initialize AgentManager: {e}")
+        app.state.agent_manager = None
 
     # === Setup ChefAnalysisAgent with prompt template ===
     chef_agent_name = None
@@ -341,72 +358,89 @@ async def lifespan(app: FastAPI):
         chef_agent_name = "chef_analysis_chaining"
 
     if chef_agent_name:
-        from agents.chef_analysis.agent import ChefAnalysisAgent
-        chef_info = registered_agents[chef_agent_name]
-        chef_prompt_template = config_loader.config.get("prompts", {}).get("chef_analysis_enhanced")
-        chef_instructions = config_loader.config.get("agent_instructions", {}).get("chef_analysis")
-        if not chef_prompt_template or not chef_instructions:
-            logger.error("ChefAnalysisAgent requires both prompt template and instructions in config.yaml!")
-            raise RuntimeError("ChefAnalysisAgent requires both prompt template and instructions in config.yaml!")
-        chef_agent = ChefAnalysisAgent(
-            client=client,
-            agent_id=chef_info["agent_id"],
-            session_id=chef_info["session_id"],
-            instruction=chef_instructions,
-            enhanced_prompt_template=chef_prompt_template,
-        )
-        app.state.chef_analysis_agent = chef_agent
-        logger.info(f"ChefAnalysisAgent ready: agent_id={chef_info['agent_id']}")
+        try:
+            from agents.chef_analysis.agent import ChefAnalysisAgent
+            chef_info = registered_agents[chef_agent_name]
+            chef_prompt_template = config_loader.config.get("prompts", {}).get("chef_analysis_enhanced")
+            chef_instructions = config_loader.config.get("agent_instructions", {}).get("chef_analysis")
+            
+            if not chef_prompt_template or not chef_instructions:
+                logger.warning("ChefAnalysisAgent missing prompt template or instructions in config.yaml - skipping")
+                app.state.chef_analysis_agent = None
+            else:
+                chef_agent = ChefAnalysisAgent(
+                    client=client,
+                    agent_id=chef_info["agent_id"],
+                    session_id=chef_info["session_id"],
+                    instruction=chef_instructions,
+                    enhanced_prompt_template=chef_prompt_template,
+                )
+                app.state.chef_analysis_agent = chef_agent
+                logger.info(f"ChefAnalysisAgent ready: agent_id={chef_info['agent_id']}")
+        except Exception as e:
+            logger.warning(f"Failed to setup ChefAnalysisAgent: {e}")
+            app.state.chef_analysis_agent = None
     else:
         logger.warning("chef_analysis agent not found in config!")
-    
+        app.state.chef_analysis_agent = None
 
-    
     # === Setup ContextAgent - FIXED FOR TOOLGROUPS ===
     if "context" in registered_agents:
-        context_info = registered_agents["context"]
-        context_config = context_info["config"]
-        
-        # Extract vector DB ID with support for both tools and toolgroups
-        vector_db_id = extract_vector_db_id(context_config, default="iac")
-        
-        logger.info(f"Context agent using vector DB: {vector_db_id}")
-        logger.info(f"Context agent toolgroups: {context_config.get('toolgroups', [])}")
-        logger.info(f"Context agent tools: {context_config.get('tools', [])}")
-        
-        # Use the registered agent with extracted vector DB ID
-        app.state.context_agent = ContextAgent(
-            client=client,
-            agent_id=context_info["agent_id"],
-            session_id=context_info["session_id"],
-            vector_db_id=vector_db_id
-        )
-        logger.info(f"ContextAgent ready: agent_id={context_info['agent_id']}")
+        try:
+            context_info = registered_agents["context"]
+            context_config = context_info["config"]
+            
+            # Extract vector DB ID with support for both tools and toolgroups
+            vector_db_id = extract_vector_db_id(context_config, default="iac")
+            
+            logger.info(f"Context agent using vector DB: {vector_db_id}")
+            logger.info(f"Context agent toolgroups: {context_config.get('toolgroups', [])}")
+            logger.info(f"Context agent tools: {context_config.get('tools', [])}")
+            
+            # Use the registered agent with extracted vector DB ID
+            app.state.context_agent = ContextAgent(
+                client=client,
+                agent_id=context_info["agent_id"],
+                session_id=context_info["session_id"],
+                vector_db_id=vector_db_id
+            )
+            logger.info(f"ContextAgent ready: agent_id={context_info['agent_id']}")
+        except Exception as e:
+            logger.warning(f"Failed to setup ContextAgent: {e}")
+            app.state.context_agent = None
     else:
         logger.warning("context agent not found in config!")
+        app.state.context_agent = None
     
     # === Setup CodeGeneratorAgent with prompt/instructions from config ===
     if "generate" in registered_agents:
-        codegen_info = registered_agents["generate"]
-        codegen_prompt = config_loader.config.get("prompts", {}).get("generate")
-        codegen_instructions = config_loader.config.get("agent_instructions", {}).get("generate")
-        if not codegen_prompt or not codegen_instructions:
-            logger.error("CodeGeneratorAgent requires both prompt template and instructions in config.yaml!")
-            raise RuntimeError("CodeGeneratorAgent requires both prompt template and instructions in config.yaml!")
-        app.state.codegen_agent = CodeGeneratorAgent(
-            client=client,
-            agent_id=codegen_info["agent_id"],
-            session_id=codegen_info["session_id"],
-            config_loader=config_loader
-        )
-        logger.info(f"CodeGeneratorAgent ready: agent_id={codegen_info['agent_id']}")
+        try:
+            codegen_info = registered_agents["generate"]
+            codegen_prompt = config_loader.config.get("prompts", {}).get("generate")
+            codegen_instructions = config_loader.config.get("agent_instructions", {}).get("generate")
+            
+            if not codegen_prompt or not codegen_instructions:
+                logger.warning("CodeGeneratorAgent missing prompt template or instructions in config.yaml - skipping")
+                app.state.codegen_agent = None
+            else:
+                app.state.codegen_agent = CodeGeneratorAgent(
+                    client=client,
+                    agent_id=codegen_info["agent_id"],
+                    session_id=codegen_info["session_id"],
+                    config_loader=config_loader
+                )
+                logger.info(f"CodeGeneratorAgent ready: agent_id={codegen_info['agent_id']}")
+        except Exception as e:
+            logger.warning(f"Failed to setup CodeGeneratorAgent: {e}")
+            app.state.codegen_agent = None
     else:
         logger.warning("generate agent not found in config!")
+        app.state.codegen_agent = None
     
-    # --- LangGraph ValidationAgent Setup (Default) ---
-    logger.info("Setting up LangGraph ValidationAgent as default...")
+    # --- LangGraph ValidationAgent Setup (NOT using LlamaStack) ---
+    logger.info("Setting up LangGraph ValidationAgent (independent of LlamaStack)...")
     
-    # Get validation instructions from config if available
+    # Get validation instructions from config if available (but it's optional)
     validation_instructions = "Validate Ansible playbooks using LangGraph agent"
     try:
         validation_info = config_loader.config.get("agents", [])
@@ -417,26 +451,36 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not get validation instructions from config: {e}")
     
+    validation_agent = None
+    
+    # Primary Strategy: Use LangGraph ValidationAgent (does NOT use LlamaStack)
     try:
+        logger.info("Initializing LangGraph ValidationAgent (standalone)...")
+        
         # Import and create LangGraph ValidationAgent
         from agents.validate.validate_agent import ValidationAgent
         
-        app.state.validation_agent = ValidationAgent(
-            client=client,
+        validation_agent = ValidationAgent(
+            client=client,  # Passed for compatibility but LangGraph agent uses its own LLM
             agent_id="langgraph-validation",
-            session_id="langgraph-session",
+            session_id="langgraph-session", 
             instruction=validation_instructions,
             config_loader=config_loader,
             verbose_logging=True,
             timeout=120
         )
-        logger.info("LangGraph ValidationAgent ready (default)")
+        
+        app.state.validation_agent = validation_agent
+        logger.info("LangGraph ValidationAgent ready (standalone - not registered with LlamaStack)")
+            
     except Exception as e:
-        logger.error(f"Failed to initialize LangGraph ValidationAgent: {e}")
-        # Fallback to AnsibleLintValidator if LangGraph agent fails
-        logger.warning("Falling back to AnsibleLintValidator...")
+        logger.error(f"LangGraph ValidationAgent initialization failed: {e}")
+        
+        # Fallback Strategy: Use AnsibleLintValidator
         try:
-            app.state.validation_agent = AnsibleLintValidator(
+            logger.warning("Falling back to AnsibleLintValidator...")
+            
+            validation_agent = AnsibleLintValidator(
                 client=client,
                 agent_id="ansible-lint-validation",
                 session_id="ansible-lint-session",
@@ -445,10 +489,14 @@ async def lifespan(app: FastAPI):
                 verbose_logging=True,
                 timeout=120
             )
+            
+            app.state.validation_agent = validation_agent
             logger.info("AnsibleLintValidator ready (fallback)")
+            
         except Exception as fallback_error:
-            logger.error(f"Fallback AnsibleLintValidator also failed: {fallback_error}")
-            raise RuntimeError(f"All validation agents failed to initialize: {e}")
+            logger.error(f"All validation agents failed to initialize: {fallback_error}")
+            app.state.validation_agent = None
+            # Don't raise here - let the app start but without validation capability
         
     # --- File upload directory setup ---
     upload_dir = os.getenv("UPLOAD_DIR")
@@ -519,8 +567,6 @@ async def root():
         except Exception as e:
             validation_status = {"error": str(e)}
     
-
-    
     # Add context agent status for debugging
     context_status = {}
     if hasattr(app.state, 'context_agent'):
@@ -534,7 +580,7 @@ async def root():
         "message": "Welcome to X2A multi-agent API",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Registry-based (Chef, Context, Generate, Validate)",
+        "agent_pattern": "Registry-based (Chef, Context, Generate) + Standalone Validation",
         "validation_agent_status": validation_status,
         "context_agent_status": context_status,
     }
