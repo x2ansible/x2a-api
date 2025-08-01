@@ -9,16 +9,15 @@ from contextlib import asynccontextmanager
 from routes.chef import router as chef_router
 from routes.context import router as context_router
 from routes.generate import router as generate_router
-from routes.validate import router as validate_router
 from routes.vector_db import router as vector_db_router
 from routes.files import router as files_router
+from routes.validate import router as validate_router
 
 from agents.agent import AgentManager
 from config.config import ConfigLoader
 from agents.context_agent.context_agent import ContextAgent
 from agents.code_generator.code_generator_agent import CodeGeneratorAgent
-from agents.validate.validate_agent import ValidationAgent
-from agents.validate.ansible_lint_validator import AnsibleLintValidator
+
 from routes.files import set_upload_dir
 from routes.vector_db import set_vector_db_client
 
@@ -437,66 +436,7 @@ async def lifespan(app: FastAPI):
         logger.warning("generate agent not found in config!")
         app.state.codegen_agent = None
     
-    # --- LangGraph ValidationAgent Setup (NOT using LlamaStack) ---
-    logger.info("Setting up LangGraph ValidationAgent (independent of LlamaStack)...")
-    
-    # Get validation instructions from config if available (but it's optional)
-    validation_instructions = "Validate Ansible playbooks using LangGraph agent"
-    try:
-        validation_info = config_loader.config.get("agents", [])
-        for agent_config in validation_info:
-            if agent_config.get("name") == "validate":
-                validation_instructions = agent_config.get("instructions", validation_instructions)
-                break
-    except Exception as e:
-        logger.warning(f"Could not get validation instructions from config: {e}")
-    
-    validation_agent = None
-    
-    # Primary Strategy: Use LangGraph ValidationAgent (does NOT use LlamaStack)
-    try:
-        logger.info("Initializing LangGraph ValidationAgent (standalone)...")
-        
-        # Import and create LangGraph ValidationAgent
-        from agents.validate.validate_agent import ValidationAgent
-        
-        validation_agent = ValidationAgent(
-            client=client,  # Passed for compatibility but LangGraph agent uses its own LLM
-            agent_id="langgraph-validation",
-            session_id="langgraph-session", 
-            instruction=validation_instructions,
-            config_loader=config_loader,
-            verbose_logging=True,
-            timeout=120
-        )
-        
-        app.state.validation_agent = validation_agent
-        logger.info("LangGraph ValidationAgent ready (standalone - not registered with LlamaStack)")
-            
-    except Exception as e:
-        logger.error(f"LangGraph ValidationAgent initialization failed: {e}")
-        
-        # Fallback Strategy: Use AnsibleLintValidator
-        try:
-            logger.warning("Falling back to AnsibleLintValidator...")
-            
-            validation_agent = AnsibleLintValidator(
-                client=client,
-                agent_id="ansible-lint-validation",
-                session_id="ansible-lint-session",
-                instruction="Validate Ansible playbooks using ansible-lint",
-                config_loader=config_loader,
-                verbose_logging=True,
-                timeout=120
-            )
-            
-            app.state.validation_agent = validation_agent
-            logger.info("AnsibleLintValidator ready (fallback)")
-            
-        except Exception as fallback_error:
-            logger.error(f"All validation agents failed to initialize: {fallback_error}")
-            app.state.validation_agent = None
-            # Don't raise here - let the app start but without validation capability
+
         
     # --- File upload directory setup ---
     upload_dir = os.getenv("UPLOAD_DIR")
@@ -550,22 +490,14 @@ app.add_middleware(
 app.include_router(chef_router, prefix="/api")
 app.include_router(context_router, prefix="/api")
 app.include_router(generate_router, prefix="/api")
-app.include_router(validate_router, prefix="/api")
 app.include_router(vector_db_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
+app.include_router(validate_router, prefix="/api")
 
 @app.get("/")
 async def root():
     registry_status = agent_registry.get_status() if agent_registry else {}
     registered_info = getattr(app.state, 'registered_agents', {})
-    
-    # Add validation agent status for debugging
-    validation_status = {}
-    if hasattr(app.state, 'validation_agent'):
-        try:
-            validation_status = app.state.validation_agent.get_status()
-        except Exception as e:
-            validation_status = {"error": str(e)}
     
     # Add context agent status for debugging
     context_status = {}
@@ -580,7 +512,6 @@ async def root():
         "message": "Welcome to X2A multi-agent API",
         "agents": list(registered_info.keys()),
         "registry_status": registry_status,
-        "agent_pattern": "Registry-based (Chef, Context, Generate) + Standalone Validation",
-        "validation_agent_status": validation_status,
+        "agent_pattern": "Registry-based (Chef, Context, Generate)",
         "context_agent_status": context_status,
     }

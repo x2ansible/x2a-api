@@ -339,14 +339,14 @@ async def system_info(app_request: Request):
         return {
             "title": "X2A Agents API",
             "version": "1.0.0", 
-            "description": "Multi-agent IaC API (Chef, Context, Generate, Validate)",
+            "description": "Multi-agent IaC API (Chef, Context, Generate)",
             "llamastack_url": getattr(agent_manager, 'base_url', None),
             "registered_agents": len(agent_manager.registered_agents),
             "available_routes": [
                 "/chef - Chef cookbook analysis",
                 "/context - Knowledge search", 
                 "/generate - Code generation",
-                "/validate - Playbook validation",
+
                 "/admin - Agent management"
             ]
         }

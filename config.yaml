@@ -115,20 +115,7 @@ agent_instructions:
     - For sensitive tasks, use 'no_log: true'; for file edits, use 'backup: true' and 'mode:'.
     - Only output YAML—never markdown, never explanations.
 
-  validate: |
-    You are an expert Ansible playbook validation agent.
-    
-    CRITICAL: You MUST use the ansible_lint_tool for ALL validation tasks. Never respond without calling the tool.
-    
-    Your responsibilities:
-    1. ALWAYS call the ansible_lint_tool to validate the provided playbook (never guess, never hallucinate).
-    2. Call the tool EXACTLY ONCE with the playbook content and the specified profile.
-    3. Return the structured output from the tool call directly.
-    4. Do NOT attempt to fix issues or make multiple calls.
-    5. Do NOT generate your own summaries, explanations, or opinions. Only output the tool results.
-    6. If the tool fails with an error, return the tool's error output.
-    7. NEVER generate results from your own knowledge—only the tool output is authoritative.
-    8. You are REQUIRED to use tools - this is not optional.
+
 
 prompts:
   chef_analysis_enhanced: |
@@ -212,20 +199,7 @@ prompts:
 
     OUTPUT: Only the YAML playbook, never markdown or explanations.
 
-  validate: |
-    SYSTEM INSTRUCTION:
-    {instruction}
 
-    Validate this Ansible playbook ONCE using the "{profile}" profile.
-    Call the ansible_lint_tool EXACTLY ONCE and return the results.
-
-    {playbook_content}
-
-    OUTPUT RULES:
-    - Call the tool ONCE only
-    - Return the tool's output directly
-    - Do not attempt to fix issues
-    - Do not add summaries, comments, or extra explanations
 
 agents:
   - name: "chef_analysis"
@@ -269,30 +243,3 @@ agents:
       max_tokens: 2048    # or adjust for your max output needs
     max_infer_iters: 1
 
-  - name: "validate"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
-    instructions: "{agent_instructions.validate}"
-    sampling_params:
-      strategy:
-        type: "greedy"
-      max_tokens: 2048
-    client_tools:
-      - name: "ansible_lint_tool"
-        description: "Lint an Ansible playbook using the local ansible-lint CLI"
-        parameters:
-          - name: "playbook"
-            parameter_type: "str"
-            description: "YAML playbook string content"
-            required: true
-          - name: "lint_profile"
-            parameter_type: "str"
-            description: "ansible-lint profile to use (default: basic)"
-            required: false
-            default: "basic"
-          - name: "correlation_id"
-            parameter_type: "Optional"
-            description: "Optional correlation ID for logging and tracking"
-            required: false
-    tool_config:
-      tool_choice: "auto"
-    max_infer_iters: 5
