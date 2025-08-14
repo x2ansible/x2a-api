@@ -1,6 +1,4 @@
 import logging
-import os
-import json
 import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,8 +34,10 @@ except Exception as e:
     logger.error(f"Failed to load configuration: {e}")
     raise RuntimeError(f"Configuration loading failed: {e}")
 
-from llama_stack_client import LlamaStackClient
+from llama_stack_client import LlamaStackClient, RAGDocument
 from llama_stack_client.types.agent_create_params import AgentConfig
+from pathlib import Path
+import os
 
 class AgentRegistry:
     def __init__(self, client: LlamaStackClient):
@@ -238,6 +238,113 @@ def extract_vector_db_id(agent_config: dict, default: str = "iac") -> str:
 
 agent_registry = None
 
+def _vector_db_exists(client: LlamaStackClient, vector_db_id: str) -> bool:
+    """Check if vector DB exists - following agentic RAG pattern"""
+    try:
+        if hasattr(client.vector_dbs, "get"):
+            client.vector_dbs.get(vector_db_id=vector_db_id)
+            return True
+        lst = client.vector_dbs.list()
+        items = lst.get("data", lst) if isinstance(lst, dict) else lst
+        if isinstance(items, list):
+            for it in items:
+                if isinstance(it, dict):
+                    vid = it.get("vector_db_id") or it.get("id") or it.get("identifier")
+                    if vid == vector_db_id:
+                        return True
+            return False
+        return False
+    except Exception as e:
+        msg = str(e).lower()
+        if "404" in msg or "not found" in msg:
+            return False
+        logger.warning("Vector DB existence check inconclusive: %s", e)
+        return False
+
+def _ensure_vector_db(client: LlamaStackClient, vector_db_id: str = "iac"):
+    """Ensure vector DB exists - following agentic RAG pattern"""
+    try:
+        # Try to register vector DB - LlamaStack will handle if it exists
+        payload = {
+            "vector_db_id": vector_db_id,
+            "embedding_model": "all-MiniLM-L6-v2",  # Default embedding model
+            "embedding_dimension": 384,  # Default dimension for all-MiniLM-L6-v2
+            "provider_id": "faiss",  # Use faiss provider instead
+        }
+        
+        client.vector_dbs.register(**payload)
+        logger.info("Vector DB '%s' registered successfully", vector_db_id)
+        return True
+        
+    except Exception as e:
+        # Check if it's just because it already exists
+        if "already exists" in str(e).lower() or "conflict" in str(e).lower():
+            logger.info("Vector DB '%s' already exists", vector_db_id)
+            return True
+        else:
+            logger.error("Failed to register Vector DB '%s': %s", vector_db_id, e)
+            return False
+
+def _ingest_startup_documents(client: LlamaStackClient, vector_db_id: str = "iac"):
+    """Ingest documents from uploads directory at startup - following agentic RAG pattern"""
+    try:
+        upload_dir = Path("uploads")
+        if not upload_dir.exists():
+            logger.info("No uploads directory found, skipping document ingestion")
+            return
+        
+        documents = []
+        
+        # Find and process documents from uploads
+        for file_path in upload_dir.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in ['.rb', '.yml', '.yaml', '.json', '.tf', '.pp', '.py', '.md', '.txt']:
+                try:
+                    content = file_path.read_text(encoding='utf-8')
+                    if content.strip():  # Only add non-empty files
+                        relative_path = str(file_path.relative_to(upload_dir))
+                        documents.append({
+                            "document_id": f"startup-{relative_path.replace('/', '-')}",
+                            "content": content,
+                            "mime_type": "text/plain",
+                            "metadata": {
+                                "file_path": relative_path,
+                                "file_name": file_path.name,
+                                "file_extension": file_path.suffix,
+                                "source": "startup_ingestion",
+                                "upload_directory": str(upload_dir)
+                            }
+                        })
+                        logger.info(f"Prepared for ingestion: {relative_path}")
+                except Exception as e:
+                    logger.warning(f"Could not read {file_path}: {e}")
+        
+        if not documents:
+            logger.info("No documents found for ingestion")
+            return
+        
+        # Convert to RAGDocument format
+        rag_documents = []
+        for doc in documents:
+            rag_doc = RAGDocument(
+                document_id=doc["document_id"],
+                content=doc["content"],
+                mime_type=doc["mime_type"],
+                metadata=doc["metadata"]
+            )
+            rag_documents.append(rag_doc)
+        
+        # Ingest using RAG tool
+        client.tool_runtime.rag_tool.insert(
+            documents=rag_documents,
+            vector_db_id=vector_db_id,
+            chunk_size_in_tokens=512
+        )
+        
+        logger.info(f"Successfully ingested {len(rag_documents)} documents into vector DB '{vector_db_id}'")
+        
+    except Exception as e:
+        logger.error(f"Document ingestion failed: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global agent_registry
@@ -383,32 +490,40 @@ async def lifespan(app: FastAPI):
         logger.warning("chef_analysis agent not found in config!")
         app.state.chef_analysis_agent = None
 
-    # === Setup ContextAgent - FIXED FOR TOOLGROUPS ===
-    if "context" in registered_agents:
-        try:
+    # === Setup ContextAgent - AGENTIC RAG PATTERN ===
+    try:
+        # Extract vector DB ID from config (fallback to default)
+        vector_db_id = "iac"  # Default vector DB ID
+        if "context" in registered_agents:
             context_info = registered_agents["context"]
             context_config = context_info["config"]
-            
-            # Extract vector DB ID with support for both tools and toolgroups
             vector_db_id = extract_vector_db_id(context_config, default="iac")
-            
-            logger.info(f"Context agent using vector DB: {vector_db_id}")
-            logger.info(f"Context agent toolgroups: {context_config.get('toolgroups', [])}")
-            logger.info(f"Context agent tools: {context_config.get('tools', [])}")
-            
-            # Use the registered agent with extracted vector DB ID
-            app.state.context_agent = ContextAgent(
-                client=client,
-                agent_id=context_info["agent_id"],
-                session_id=context_info["session_id"],
-                vector_db_id=vector_db_id
-            )
-            logger.info(f"ContextAgent ready: agent_id={context_info['agent_id']}")
-        except Exception as e:
-            logger.warning(f"Failed to setup ContextAgent: {e}")
-            app.state.context_agent = None
-    else:
-        logger.warning("context agent not found in config!")
+            logger.info(f"Using vector DB ID from config: {vector_db_id}")
+        else:
+            logger.info(f"No context agent in config, using default vector DB: {vector_db_id}")
+        
+        # Create ContextAgent with own Agent instance (agentic RAG pattern)
+        app.state.context_agent = ContextAgent(
+            client=client,
+            vector_db_id=vector_db_id
+        )
+        logger.info(f"ContextAgent ready with agentic RAG pattern: vector_db={vector_db_id}")
+        
+        # === VECTOR DB SETUP AND INGESTION (STARTUP) ===
+        logger.info("Setting up vector database and ingesting documents...")
+        
+        # Ensure vector DB exists
+        vector_db_ready = _ensure_vector_db(client, vector_db_id)
+        
+        if vector_db_ready:
+            # Ingest documents from uploads directory
+            _ingest_startup_documents(client, vector_db_id)
+            logger.info(f"Vector DB setup and ingestion completed for: {vector_db_id}")
+        else:
+            logger.warning(f"Vector DB setup failed for: {vector_db_id}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to setup ContextAgent: {e}")
         app.state.context_agent = None
     
     # === Setup CodeGeneratorAgent with prompt/instructions from config ===

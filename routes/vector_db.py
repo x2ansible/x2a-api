@@ -50,7 +50,12 @@ async def list_vector_dbs():
         raise HTTPException(status_code=500, detail="LlamaStackClient not initialized")
     try:
         result = client.vector_dbs.list()
-        logger.info(f"Listed {len(getattr(result, 'data', []))} vector databases")
+        # Handle different response formats - could be list directly or have 'data' attribute
+        if isinstance(result, list):
+            count = len(result)
+        else:
+            count = len(getattr(result, 'data', []))
+        logger.info(f"Listed {count} vector databases")
         return result
     except Exception as e:
         logger.error(f"Failed to list vector DBs: {e}")

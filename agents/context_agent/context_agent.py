@@ -1,310 +1,166 @@
 import uuid
-import logging
-from llama_stack_client import LlamaStackClient
-from llama_stack_client.types import UserMessage
-from shared.log_utils import create_correlation_logger, step_printer
-from datetime import datetime
+import json
+from typing import Dict, Any, Generator
+from llama_stack_client import LlamaStackClient, Agent, AgentEventLogger
+from shared.log_utils import create_correlation_logger
 
 class ContextAgent:
     """
-    FIXED ContextAgent - Uses existing LlamaStack agent instead of creating new one
+    Agentic RAG ContextAgent - Creates own Agent instance with defined instructions and tools
     """
-    def __init__(self, client: LlamaStackClient, agent_id: str, session_id: str, vector_db_id: str, timeout: int = 60):
+    def __init__(self, client: LlamaStackClient, vector_db_id: str, model: str = "meta-llama/Llama-3.1-8B-Instruct"):
         self.client = client
-        self.agent_id = agent_id
-        self.session_id = session_id
         self.vector_db_id = vector_db_id
-        self.timeout = timeout
-        # Model will be determined from agent configuration, not hard-coded
+        self.model = model
         
         # Use shared logging utilities with correlation ID
         self.logger = create_correlation_logger("context-agent", "context-agent-init")
 
-        self.logger.info("ContextAgent initialized")
+        # Create own Agent instance following agentic RAG pattern
+        self.agent = self._create_agent()
+        
+        self.logger.info("ContextAgent initialized with own Agent instance")
         self.logger.info(f"Vector DB: {self.vector_db_id}")
-        self.logger.info(f"Agent ID: {self.agent_id}")
-        self.logger.info(f"Session ID: {self.session_id}")
+        self.logger.info(f"Model: {self.model}")
+
+    def _create_agent(self) -> Agent:
+        """Create RAG agent with knowledge search capabilities - following agentic RAG pattern."""
+        instructions = """You are a RAG retrieval assistant specializing in Infrastructure as Code patterns.
+
+MANDATORY WORKFLOW - FOLLOW EXACTLY:
+1. IMMEDIATELY call the knowledge_search tool with the user's exact input as the query parameter.
+2. WAIT for the complete tool response with retrieved content.
+3. If the tool returns relevant content, return ONLY the retrieved content without any commentary.
+4. If no relevant content is found, respond: "No relevant patterns found for this input."
+
+CRITICAL RULES:
+- NEVER respond without first calling the knowledge_search tool
+- NEVER generate answers from your own knowledge
+- ALWAYS use the user's input as the search query
+- The knowledge_search tool will access the Infrastructure as Code vector database
+- Return ONLY the raw retrieved content, NO introduction text, NO conclusion text
+- DO NOT add phrases like "Based on the knowledge_search tool results" or "These patterns can be used"
+- Return the pure retrieved patterns/content directly"""
+
+        tools = [
+            {
+                "name": "builtin::rag/knowledge_search",
+                "args": {
+                    "vector_db_ids": [self.vector_db_id],
+                    "top_k": 3,  # Reduced from 5 to 3 for stability
+                },
+            }
+        ]
+
+        agent = Agent(
+            client=self.client,
+            model=self.model,
+            instructions=instructions,
+            tools=tools,
+        )
+        
+        self.logger.info(f"Created RAG agent with model: {self.model}")
+        return agent
+
+    def _sse(self, payload: Dict[str, Any]) -> bytes:
+        """Server-sent events formatter for streaming responses"""
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+
+    def _extract_response_content(self, response) -> str:
+        """Extract text content from agent response."""
+        if hasattr(response, 'output_message'):
+            output_msg = response.output_message
+            if hasattr(output_msg, 'content') and output_msg.content:
+                return output_msg.content
+            elif isinstance(output_msg, str):
+                return output_msg
+        
+        if hasattr(response, 'content') and response.content:
+            return response.content
+        
+        if hasattr(response, 'message'):
+            msg = response.message
+            if hasattr(msg, 'content'):
+                return msg.content
+            elif isinstance(msg, str):
+                return msg
+        
+        if isinstance(response, str):
+            return response
+        
+        return str(response) if response else "No response received"
 
     def create_new_session(self, correlation_id: str) -> str:
-        """Create new session for context queries"""
+        """Create new session for context queries - using agent instance"""
         try:
             session_name = f"context-query-{correlation_id}-{uuid.uuid4()}"
-            response = self.client.agents.session.create(
-                agent_id=self.agent_id,
-                session_name=session_name,
-            )
-            session_id = response.session_id
+            session_id = self.agent.create_session(session_name)
             # Create logger with correlation ID for this session
             session_logger = create_correlation_logger("context-agent", correlation_id)
             session_logger.info(f"Created context session: {session_id} for correlation: {correlation_id}")
             return session_id
         except Exception as e:
             self.logger.error(f"Failed to create session: {e}")
-            self.logger.info(f"Falling back to default session: {self.session_id}")
-            return self.session_id
+            # Create a fallback session
+            fallback_session_id = self.agent.create_session(f"fallback-{uuid.uuid4()}")
+            self.logger.info(f"Using fallback session: {fallback_session_id}")
+            return fallback_session_id
 
     async def query_context(self, code, top_k=5, correlation_id=None):
+        """Simplified context query using agentic RAG pattern"""
         correlation_id = correlation_id or str(uuid.uuid4())
-        
-        # Create logger with correlation ID for this query
         query_logger = create_correlation_logger("context-agent", correlation_id)
         
-        query_logger.info(f"Sending query to ContextAgent: {repr(code)[:200]}...")
-        query_logger.info(f"Using vector DB: {self.vector_db_id}")
-        
-        # Use the existing agent infrastructure instead of creating new agent
-        session_id = self.create_new_session(correlation_id)
+        query_logger.info(f"Context query: {repr(code)[:100]}...")
         
         try:
-            query_logger.info(f"Creating turn with session: {session_id}")
+            # Use agentic approach - let agent handle the RAG query
+            session_id = self.agent.create_session(f"context-{uuid.uuid4()}")
             
-            # Use the proper LlamaStack client API
-            messages = [UserMessage(role="user", content=code)]
-            
-            generator = self.client.agents.turn.create(
-                agent_id=self.agent_id,
+            response = self.agent.create_turn(
+                messages=[{"role": "user", "content": code}],
                 session_id=session_id,
-                messages=messages,
-                stream=True,
+                stream=False
             )
             
-            # Process the streaming response
-            turn = None
-            chunk_count = 0
+            # Extract response content
+            response_text = self._extract_response_content(response)
             
-            for chunk in generator:
-                chunk_count += 1
-                if chunk and hasattr(chunk, 'event') and chunk.event:
-                    event = chunk.event
-                    if hasattr(event, 'payload') and event.payload:
-                        event_type = getattr(event.payload, 'event_type', None)
-                        if event_type == "turn_complete":
-                            turn = getattr(event.payload, 'turn', None)
-                            query_logger.info(f"Turn completed successfully after {chunk_count} chunks")
-                            break
-                        elif event_type == "step_complete":
-                            query_logger.debug(f"Step completed: {chunk_count}")
+            # For UI compatibility, return context chunks format
+            context_chunks = []
+            if response_text and response_text.strip():
+                # Split response into chunks for UI compatibility
+                chunks = [chunk.strip() for chunk in response_text.split('\n\n') if chunk.strip()]
+                context_chunks = [{"text": chunk} for chunk in chunks]
             
-            if not turn:
-                query_logger.error(f"No turn completed in response")
-                return {
-                    "context": [{"text": "No turn completed in response"}],
-                    "steps": [],
-                    "elapsed_time": 0,
-                    "correlation_id": correlation_id
+            if not context_chunks:
+                context_chunks = [{"text": "No relevant patterns found for this input."}]
+            
+            query_logger.info(f"Returned {len(context_chunks)} context chunks")
+            
+            return {
+                "context": context_chunks,
+                "steps": getattr(response, 'steps', []),
+                "elapsed_time": 0,
+                "correlation_id": correlation_id,
+                "debug_info": {
+                    "method": "agentic_rag",
+                    "session_id": session_id,
+                    "response_length": len(response_text) if response_text else 0
                 }
+            }
             
-            steps = getattr(turn, 'steps', [])
-            query_logger.info(f"Processing {len(steps)} steps")
-            
-            # Use shared step_printer for better logging
-            try:
-                step_printer(steps, query_logger)
-            except AttributeError as e:
-                if "console" in str(e):
-                    query_logger.info("Step printer console not available, using basic logging")
-                    for i, step in enumerate(steps):
-                        step_type = type(step).__name__
-                        query_logger.info(f"Step {i+1}: {step_type}")
-                else:
-                    raise e
-            
-            # Enhanced content extraction with better debugging
         except Exception as e:
-            query_logger.error(f"Turn creation failed: {e}")
+            query_logger.error(f"Context query failed: {e}")
             return {
                 "context": [{"text": f"Query failed: {str(e)}"}],
                 "steps": [],
                 "elapsed_time": 0,
-                "correlation_id": correlation_id
+                "correlation_id": correlation_id,
+                "debug_info": {"error": str(e)}
             }
-        
-        # Enhanced content extraction with better debugging
-        context_chunks = []
-        tool_responses_found = 0
-        vector_db_responses_found = 0
-        
-        for i, step in enumerate(steps):
-            step_type = type(step).__name__
-            query_logger.info(f"Step {i+1}: {step_type}")
-            
-            tool_responses = getattr(step, "tool_responses", [])
-            if tool_responses:
-                tool_responses_found += len(tool_responses)
-                query_logger.info(f"Found {len(tool_responses)} tool responses in step {i+1}")
-                
-                for j, tool_response in enumerate(tool_responses):
-                    content = getattr(tool_response, "content", None)
-                    tool_name = getattr(tool_response, "tool_name", "unknown")
-                    query_logger.info(f"Tool response {j+1}: {tool_name}, content type: {type(content)}")
-                    
-                    # Validate that this is a vector DB search response
-                    if ("knowledge_search" in tool_name.lower() or 
-                        "rag" in tool_name.lower() or 
-                        "search" in tool_name.lower() or
-                        "builtin::rag/knowledge_search" in tool_name):
-                        vector_db_responses_found += 1
-                        query_logger.info(f"Vector DB search response found: {tool_name}")
-                        
-                        # Log RAG-specific response structure
-                        if isinstance(content, str):
-                            query_logger.info(f"RAG response type: string, length: {len(content)}")
-                        elif isinstance(content, list):
-                            query_logger.info(f"RAG response type: list, items: {len(content)}")
-                            for idx, item in enumerate(content):
-                                if hasattr(item, 'content'):
-                                    query_logger.info(f"RAG item {idx}: content field present")
-                                elif hasattr(item, 'text'):
-                                    query_logger.info(f"RAG item {idx}: text field present")
-                        else:
-                            query_logger.info(f"RAG response type: {type(content)}")
-                    
-                    if isinstance(content, list):
-                        query_logger.info(f"Processing list content with {len(content)} items")
-                        for item in content:
-                            if hasattr(item, "text"):
-                                text = item.text.strip()
-                                if self._is_valid_context(text):
-                                    context_chunks.append(text)
-                                    query_logger.info(f"Added item.text: {len(text)} chars")
-                            elif hasattr(item, "content"):
-                                text = item.content.strip()
-                                if self._is_valid_context(text):
-                                    context_chunks.append(text)
-                                    query_logger.info(f"Added item.content: {len(text)} chars")
-                            elif isinstance(item, dict) and "content" in item:
-                                text = item["content"].strip()
-                                if self._is_valid_context(text):
-                                    context_chunks.append(text)
-                                    query_logger.info(f"Added dict content: {len(text)} chars")
-                            # RAG-specific: handle chunk.content format
-                            elif isinstance(item, dict) and "chunk" in item:
-                                chunk = item["chunk"]
-                                if isinstance(chunk, dict) and "content" in chunk:
-                                    text = chunk["content"].strip()
-                                    if self._is_valid_context(text):
-                                        context_chunks.append(text)
-                                        query_logger.info(f"Added RAG chunk.content: {len(text)} chars")
-                                elif hasattr(chunk, "content"):
-                                    text = chunk.content.strip()
-                                    if self._is_valid_context(text):
-                                        context_chunks.append(text)
-                                        query_logger.info(f"Added RAG chunk.content: {len(text)} chars")
-                            # RAG-specific: handle metadata format
-                            elif isinstance(item, dict) and "metadata" in item:
-                                metadata = item["metadata"]
-                                if isinstance(metadata, dict) and "content" in metadata:
-                                    text = metadata["content"].strip()
-                                    if self._is_valid_context(text):
-                                        context_chunks.append(text)
-                                        query_logger.info(f"Added RAG metadata.content: {len(text)} chars")
-                    elif isinstance(content, str):
-                        text = content.strip()
-                        if self._is_valid_context(text):
-                            context_chunks.append(text)
-                            query_logger.info(f"Added string content: {len(text)} chars")
-        
-        query_logger.info(f"Total tool responses found: {tool_responses_found}")
-        query_logger.info(f"Vector DB search responses found: {vector_db_responses_found}")
-        query_logger.info(f"Extracted {len(context_chunks)} valid chunks")
-        
-        # As a last resort, append the top-level LLM output if no vector DB responses found
-        if not context_chunks and vector_db_responses_found == 0:
-            query_logger.warning("No vector DB search responses found, checking LLM output as fallback")
-            # Try to get content from turn output message
-            if hasattr(turn, 'output_message') and turn.output_message:
-                top_content = getattr(turn.output_message, "content", "").strip()
-                if top_content:
-                    context_chunks.append(top_content)
-                    query_logger.info(f"Using LLM fallback response: {len(top_content)} chars")
-                else:
-                    query_logger.warning("No content found in output message")
-                    context_chunks.append("No relevant patterns found for this input.")
-            else:
-                query_logger.warning("No output message found in turn")
-                context_chunks.append("No relevant patterns found for this input.")
-        elif vector_db_responses_found == 0:
-            query_logger.warning("No vector DB search responses found - agent may not be calling vector DB tools")
-            context_chunks.append("No vector DB search results found. Please check tool configuration.")
-        
-        # Output as a list of dicts for UI compatibility
-        context_list = [{"text": chunk} for chunk in context_chunks if chunk]
-        query_logger.info(f" ContextAgent returned {len(context_list)} chunks")
-        
-        # Add comprehensive debugging information
-        debug_info = {
-            "tool_responses_found": tool_responses_found,
-            "vector_db_responses_found": vector_db_responses_found,
-            "context_chunks_extracted": len(context_chunks),
-            "session_id": session_id,
-            "correlation_id": correlation_id,
-            "vector_db_id": self.vector_db_id,
-            "rag_tool_detected": vector_db_responses_found > 0,
-            "rag_tool_name": "builtin::rag/knowledge_search",
-            "expected_tool_calls": True
-        }
-        query_logger.info(f"Debug info: {debug_info}")
-        
-        # Enhanced validation for RAG agent behavior
-        if vector_db_responses_found == 0:
-            query_logger.warning("RAG agent did not call knowledge_search tool - this may indicate configuration issues")
-            query_logger.warning("Expected tool: builtin::rag/knowledge_search")
-            query_logger.warning("Check agent configuration and tool setup")
-        else:
-            query_logger.info(f"RAG agent successfully called knowledge_search tool {vector_db_responses_found} times")
-        
-        return {
-            "context": context_list,
-            "steps": steps,
-            "elapsed_time": 0,  # Add for compatibility
-            "correlation_id": correlation_id,
-            "debug_info": debug_info
-        }
 
-    async def query_context_stream(self, code, top_k=5, correlation_id=None):
-        """Stream context query results for UI compatibility"""
-        correlation_id = correlation_id or str(uuid.uuid4())
-        
-        # Create logger with correlation ID for this query
-        query_logger = create_correlation_logger("context-agent", correlation_id)
-        
-        query_logger.info(f"Starting streaming query: {repr(code)[:200]}...")
-        
-        # Yield start event
-        yield {
-            'event': 'start', 
-            'timestamp': datetime.now().isoformat(), 
-            'msg': 'Context search started'
-        }
-        
-        # Yield progress event
-        yield {
-            'event': 'progress', 
-            'progress': 0.5, 
-            'msg': 'Searching knowledge base...', 
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        try:
-            # Perform the actual query
-            result = await self.query_context(code, top_k, correlation_id)
-            
-            # Yield completion event
-            yield {
-                'event': 'complete',
-                'context': result.get('context', []),
-                'correlation_id': result.get('correlation_id', correlation_id),
-                'elapsed_time': result.get('elapsed_time', 0),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            query_logger.error(f"Streaming query failed: {e}")
-            yield {
-                'event': 'error',
-                'error': str(e),
-                'timestamp': datetime.now().isoformat()
-            }
+
 
     def _is_valid_context(self, text):
         """Enhanced content validation"""
@@ -327,23 +183,146 @@ class ContextAgent:
         
         return True
 
+    async def ask_question(self, question: str, correlation_id: str = None) -> Dict[str, Any]:
+        """Ask a question to the RAG agent - following agentic RAG pattern."""
+        correlation_id = correlation_id or str(uuid.uuid4())
+        query_logger = create_correlation_logger("context-agent", correlation_id)
+        
+        query_logger.info(f"Processing question: {question[:100]}...")
+        
+        try:
+            session_id = self.agent.create_session(f"session-{uuid.uuid4()}")
+            
+            response = self.agent.create_turn(
+                messages=[{"role": "user", "content": question}],
+                session_id=session_id,
+                stream=False
+            )
+            
+            # Use built-in LlamaStack logging to show steps
+            query_logger.info("=== Agent Steps for Question: %s ===", question[:50])
+            if hasattr(response, 'steps') and response.steps:
+                # Log each step to show RAG tool usage
+                for i, step in enumerate(response.steps):
+                    query_logger.info("Step %d: %s", i+1, getattr(step, 'step_type', 'unknown'))
+                    if hasattr(step, 'tool_calls') and step.tool_calls:
+                        for tool_call in step.tool_calls:
+                            tool_name = getattr(tool_call, 'tool_name', 'unknown')
+                            query_logger.info("  → Tool called: %s", tool_name)
+                            if hasattr(tool_call, 'result') and tool_call.result:
+                                result_preview = str(tool_call.result)[:100] + "..." if len(str(tool_call.result)) > 100 else str(tool_call.result)
+                                query_logger.info("  → Tool result preview: %s", result_preview)
+            
+            response_text = self._extract_response_content(response)
+            
+            return {
+                "question": question,
+                "answer": response_text,
+                "session_id": session_id,
+                "correlation_id": correlation_id,
+                "status": "success"
+            }
+            
+        except Exception as e:
+            query_logger.error("Question processing error: %s", e, exc_info=True)
+            return {
+                "question": question,
+                "answer": f"Query failed: {str(e)}",
+                "session_id": None,
+                "correlation_id": correlation_id,
+                "status": "error"
+            }
+
+    def _iter_stream_with_agent(self, session_id: str, question: str):
+        """Stream responses from the agent - following agentic RAG pattern."""
+        try:
+            response_stream = self.agent.create_turn(
+                messages=[{"role": "user", "content": question}],
+                session_id=session_id,
+                stream=True
+            )
+
+            accumulated_text = ""
+            event_logger = AgentEventLogger()
+            
+            for event in event_logger.log(response_stream):
+                try:
+                    event_content = None
+                    if hasattr(event, 'content'):
+                        event_content = event.content
+                    elif hasattr(event, 'text'):
+                        event_content = event.text
+                    
+                    if event_content and isinstance(event_content, str) and event_content.strip():
+                        # Skip tool call JSON, send actual response text
+                        if not (event_content.strip().startswith('{') and 'knowledge_search' in event_content):
+                            accumulated_text += event_content
+                            yield self._sse({"type": "text", "content": event_content})
+
+                    # Check for completion
+                    event_type_name = type(event).__name__.lower()
+                    if 'turn' in event_type_name and 'complete' in event_type_name:
+                        if accumulated_text.strip():
+                            yield self._sse({"type": "done", "full_response": accumulated_text.strip()})
+                        else:
+                            yield self._sse({"type": "done", "full_response": "Response completed"})
+                        return
+
+                except Exception as e:
+                    self.logger.warning("Error processing event: %s", e)
+
+            # Fallback completion
+            if accumulated_text.strip():
+                yield self._sse({"type": "done", "full_response": accumulated_text.strip()})
+            else:
+                yield self._sse({"type": "done", "full_response": "Response completed"})
+
+        except Exception as e:
+            self.logger.error("Error in agent streaming: %s", e, exc_info=True)
+            yield self._sse({"type": "error", "error": str(e)})
+
+    async def ask_question_stream(self, question: str, correlation_id: str = None) -> Generator[bytes, None, None]:
+        """Ask a question to the RAG agent with streaming response - following agentic RAG pattern."""
+        correlation_id = correlation_id or str(uuid.uuid4())
+        query_logger = create_correlation_logger("context-agent", correlation_id)
+        
+        query_logger.info(f"Starting streaming question: {question[:100]}...")
+        
+        try:
+            session_id = self.agent.create_session(f"stream-session-{uuid.uuid4()}")
+            
+            for chunk in self._iter_stream_with_agent(session_id, question):
+                yield chunk
+                
+        except Exception as e:
+            query_logger.error("Streaming error: %s", e, exc_info=True)
+            yield self._sse({"type": "error", "error": str(e)})
+
     def get_status(self):
         """Get current status"""
         return {
-            "agent_id": self.agent_id,
-            "session_id": self.session_id,
             "vector_db_id": self.vector_db_id,
-            "model": "Fixed Agent (No Internal Agent Creation)", # This will need to be updated if model is determined from agent config
+            "model": self.model,
             "status": "ready",
-            "pattern": "Fixed Agent (No Internal Agent Creation)",
+            "pattern": "Agentic RAG - Own Agent Instance",
             "capabilities": {
                 "vector_db_search": True,
                 "tool_calling": True,
-                "session_management": True
+                "session_management": True,
+                "conversational_interface": True,
+                "streaming_responses": True
             },
             "configuration": {
-                "timeout": self.timeout,
-                "vector_db_configured": bool(self.vector_db_id)
+                "vector_db_configured": bool(self.vector_db_id),
+                "own_agent_instance": True,
+                "instructions_defined": True,
+                "tools_configured": True
+            },
+            "enhanced_features": {
+                "ask_question": "Conversational question answering with complete responses",
+                "ask_question_stream": "Real-time streaming conversational interface",
+                "sse_support": "Server-sent events for streaming",
+                "intelligent_synthesis": "Agent synthesizes complete answers from RAG results"
             }
         }
 
@@ -362,26 +341,18 @@ class ContextAgent:
             return False
 
     async def health_check(self):
-        """Quick health check"""
+        """Quick health check - using agent instance"""
         try:
             # Create a simple session for health check
-            session_id = self.create_new_session("health-check")
-            messages = [UserMessage(role="user", content="health check")]
+            session_id = self.agent.create_session(f"health-check-{uuid.uuid4()}")
             
-            generator = self.client.agents.turn.create(
-                agent_id=self.agent_id,
+            response = self.agent.create_turn(
+                messages=[{"role": "user", "content": "health check"}],
                 session_id=session_id,
-                messages=messages,
-                stream=True,
+                stream=False
             )
             
-            # Just check if we get any response
-            chunk_received = False
-            for chunk in generator:
-                chunk_received = True
-                break
-            
-            if chunk_received:
+            if response:
                 self.logger.info("ContextAgent health check passed")
                 return True
             else:
