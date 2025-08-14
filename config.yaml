@@ -16,6 +16,14 @@ vector_db:
   default_db_id: "iac"
   default_chunk_size: 512
 
+# GitHub repository ingestion at startup
+github_ingestion:
+  enabled: true
+  repositories:
+    - url: "https://github.com/x2ansible/x2a-ui/tree/main/docs/iac"
+      file_extensions: [".md", ".py", ".yaml", ".yml", ".txt", ".rst", ".rb", ".tf", ".json"]
+      # token: "your_github_token_here"  # Optional - add if needed for private repos
+
 agent_instructions:
   chef_analysis: |
     You are an expert Chef cookbook analyst specializing in infrastructure automation and migration to modern IaC platforms.

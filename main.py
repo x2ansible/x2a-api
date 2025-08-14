@@ -38,6 +38,7 @@ from llama_stack_client import LlamaStackClient, RAGDocument
 from llama_stack_client.types.agent_create_params import AgentConfig
 from pathlib import Path
 import os
+import requests
 
 class AgentRegistry:
     def __init__(self, client: LlamaStackClient):
@@ -286,35 +287,35 @@ def _ensure_vector_db(client: LlamaStackClient, vector_db_id: str = "iac"):
             return False
 
 def _ingest_startup_documents(client: LlamaStackClient, vector_db_id: str = "iac"):
-    """Ingest documents from uploads directory at startup - following agentic RAG pattern"""
+    """Ingest documents from context_agent docs directory at startup - following agentic RAG pattern"""
     try:
-        upload_dir = Path("uploads")
-        if not upload_dir.exists():
-            logger.info("No uploads directory found, skipping document ingestion")
+        docs_dir = Path("agents/context_agent/docs")
+        if not docs_dir.exists():
+            logger.info("No context_agent docs directory found, skipping local document ingestion")
             return
         
         documents = []
         
-        # Find and process documents from uploads
-        for file_path in upload_dir.rglob("*"):
+        # Find and process documents from context_agent docs
+        for file_path in docs_dir.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in ['.rb', '.yml', '.yaml', '.json', '.tf', '.pp', '.py', '.md', '.txt']:
                 try:
                     content = file_path.read_text(encoding='utf-8')
                     if content.strip():  # Only add non-empty files
-                        relative_path = str(file_path.relative_to(upload_dir))
+                        relative_path = str(file_path.relative_to(docs_dir))
                         documents.append({
-                            "document_id": f"startup-{relative_path.replace('/', '-')}",
+                            "document_id": f"local-docs-{relative_path.replace('/', '-')}",
                             "content": content,
                             "mime_type": "text/plain",
                             "metadata": {
                                 "file_path": relative_path,
                                 "file_name": file_path.name,
                                 "file_extension": file_path.suffix,
-                                "source": "startup_ingestion",
-                                "upload_directory": str(upload_dir)
+                                "source": "local_docs_ingestion",
+                                "docs_directory": str(docs_dir)
                             }
                         })
-                        logger.info(f"Prepared for ingestion: {relative_path}")
+                        logger.info(f"Prepared local doc for ingestion: {relative_path}")
                 except Exception as e:
                     logger.warning(f"Could not read {file_path}: {e}")
         
@@ -344,6 +345,165 @@ def _ingest_startup_documents(client: LlamaStackClient, vector_db_id: str = "iac
         
     except Exception as e:
         logger.error(f"Document ingestion failed: {e}")
+
+def _fetch_github_files(github_url: str, file_extensions: list, token: str = None) -> list:
+    """Fetch files from GitHub repository and return as documents ready for RAG ingestion."""
+    try:
+        # Parse GitHub URL to extract owner, repo, and path
+        # URL format: https://github.com/owner/repo/tree/branch/path
+        parts = github_url.replace("https://github.com/", "").split("/")
+        if len(parts) < 2:
+            raise ValueError("Invalid GitHub URL format")
+        
+        owner = parts[0]
+        repo = parts[1]
+        
+        # Find branch and path
+        if "tree" in parts:
+            tree_index = parts.index("tree")
+            branch = parts[tree_index + 1] if tree_index + 1 < len(parts) else "main"
+            path = "/".join(parts[tree_index + 2:]) if tree_index + 2 < len(parts) else ""
+        else:
+            branch = "main"
+            path = ""
+        
+        # GitHub API to get repository contents
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        if branch != "main":
+            api_url += f"?ref={branch}"
+        
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if token:
+            headers["Authorization"] = f"token {token}"
+        
+        response = requests.get(api_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        contents = response.json()
+        documents = []
+        
+        def process_item(item, current_path=""):
+            if item["type"] == "file":
+                file_path = f"{current_path}/{item['name']}" if current_path else item["name"]
+                file_ext = Path(item["name"]).suffix.lower()
+                
+                if file_ext in file_extensions:
+                    # Download file content
+                    try:
+                        file_response = requests.get(item["download_url"], timeout=30)
+                        if file_response.status_code == 200:
+                            content = file_response.text
+                            documents.append({
+                                "document_id": f"github-{owner}-{repo}-{file_path.replace('/', '-')}",
+                                "content": content,
+                                "mime_type": "text/plain",
+                                "metadata": {
+                                    "file_path": file_path,
+                                    "file_name": item["name"],
+                                    "file_extension": file_ext,
+                                    "repository": f"{owner}/{repo}",
+                                    "branch": branch,
+                                    "github_url": item["html_url"],
+                                    "size": item["size"],
+                                    "source": "github_startup"
+                                }
+                            })
+                            logger.info(f"Fetched from GitHub: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"Could not fetch {file_path}: {e}")
+            
+            elif item["type"] == "dir" and len(current_path.split("/")) < 3:  # Limit recursion depth
+                # Recursively fetch directory contents  
+                dir_path = f"{current_path}/{item['name']}" if current_path else item["name"]
+                dir_api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}/{dir_path}" if path else f"https://api.github.com/repos/{owner}/{repo}/contents/{dir_path}"
+                if branch != "main":
+                    dir_api_url += f"?ref={branch}"
+                
+                try:
+                    dir_response = requests.get(dir_api_url, headers=headers, timeout=30)
+                    dir_response.raise_for_status()
+                    dir_contents = dir_response.json()
+                    
+                    if isinstance(dir_contents, list):
+                        for sub_item in dir_contents:
+                            process_item(sub_item, dir_path)
+                except Exception as e:
+                    logger.warning(f"Could not fetch directory {dir_path}: {e}")
+        
+        # Process all items
+        if isinstance(contents, list):
+            for item in contents:
+                process_item(item)
+        else:
+            # Single file
+            process_item(contents)
+        
+        return documents
+        
+    except Exception as e:
+        logger.error(f"Error fetching GitHub files from {github_url}: {e}")
+        return []
+
+def _ingest_github_repositories(client: LlamaStackClient, vector_db_id: str = "iac"):
+    """Ingest documents from configured GitHub repositories at startup."""
+    try:
+        # Get GitHub configuration from config
+        github_config = config_loader.config.get("github_ingestion", {})
+        
+        if not github_config.get("enabled", False):
+            logger.info("GitHub ingestion disabled in config")
+            return
+        
+        repositories = github_config.get("repositories", [])
+        if not repositories:
+            logger.info("No GitHub repositories configured for ingestion")
+            return
+        
+        all_documents = []
+        
+        for repo_config in repositories:
+            repo_url = repo_config.get("url")
+            file_extensions = repo_config.get("file_extensions", [".md", ".py", ".yaml", ".yml", ".txt"])
+            token = repo_config.get("token")
+            
+            if not repo_url:
+                logger.warning("Repository URL missing in config, skipping")
+                continue
+            
+            logger.info(f"Fetching files from GitHub repository: {repo_url}")
+            
+            # Fetch documents from this repository
+            repo_documents = _fetch_github_files(repo_url, file_extensions, token)
+            all_documents.extend(repo_documents)
+            
+            logger.info(f"Fetched {len(repo_documents)} files from {repo_url}")
+        
+        if not all_documents:
+            logger.info("No GitHub documents found for ingestion")
+            return
+        
+        # Convert to RAGDocument format
+        rag_documents = []
+        for doc in all_documents:
+            rag_doc = RAGDocument(
+                document_id=doc["document_id"],
+                content=doc["content"],
+                mime_type=doc["mime_type"],
+                metadata=doc["metadata"]
+            )
+            rag_documents.append(rag_doc)
+        
+        # Ingest using RAG tool
+        client.tool_runtime.rag_tool.insert(
+            documents=rag_documents,
+            vector_db_id=vector_db_id,
+            chunk_size_in_tokens=512
+        )
+        
+        logger.info(f"Successfully ingested {len(rag_documents)} GitHub documents into vector DB '{vector_db_id}'")
+        
+    except Exception as e:
+        logger.error(f"GitHub repository ingestion failed: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -516,8 +676,12 @@ async def lifespan(app: FastAPI):
         vector_db_ready = _ensure_vector_db(client, vector_db_id)
         
         if vector_db_ready:
-            # Ingest documents from uploads directory
+            # Ingest local documents from context_agent/docs directory
             _ingest_startup_documents(client, vector_db_id)
+            
+            # Ingest documents from configured GitHub repositories
+            _ingest_github_repositories(client, vector_db_id)
+            
             logger.info(f"Vector DB setup and ingestion completed for: {vector_db_id}")
         else:
             logger.warning(f"Vector DB setup failed for: {vector_db_id}")

@@ -30,17 +30,18 @@ class ContextAgent:
 MANDATORY WORKFLOW - FOLLOW EXACTLY:
 1. IMMEDIATELY call the knowledge_search tool with the user's exact input as the query parameter.
 2. WAIT for the complete tool response with retrieved content.
-3. If the tool returns relevant content, return ONLY the retrieved content without any commentary.
+3. Extract the raw content from the tool results and return it EXACTLY as retrieved.
 4. If no relevant content is found, respond: "No relevant patterns found for this input."
 
 CRITICAL RULES:
 - NEVER respond without first calling the knowledge_search tool
 - NEVER generate answers from your own knowledge
 - ALWAYS use the user's input as the search query
-- The knowledge_search tool will access the Infrastructure as Code vector database
-- Return ONLY the raw retrieved content, NO introduction text, NO conclusion text
-- DO NOT add phrases like "Based on the knowledge_search tool results" or "These patterns can be used"
-- Return the pure retrieved patterns/content directly"""
+- Return ONLY the raw retrieved content - NO prefixes like "The retrieved content is:"
+- NO commentary, NO introduction, NO conclusion text
+- DO NOT add phrases like "Based on the knowledge_search tool results"
+- Extract and return the pure content from the tool results directly
+- If tool returns multiple chunks, concatenate them without extra text"""
 
         tools = [
             {
@@ -67,7 +68,8 @@ CRITICAL RULES:
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
     def _extract_response_content(self, response) -> str:
-        """Extract text content from agent response."""
+        """Extract text content from agent response - enhanced for agentic RAG."""
+        # First, try the standard output message
         if hasattr(response, 'output_message'):
             output_msg = response.output_message
             if hasattr(output_msg, 'content') and output_msg.content:
@@ -75,9 +77,11 @@ CRITICAL RULES:
             elif isinstance(output_msg, str):
                 return output_msg
         
+        # Check for content attribute
         if hasattr(response, 'content') and response.content:
             return response.content
         
+        # Check message attribute
         if hasattr(response, 'message'):
             msg = response.message
             if hasattr(msg, 'content'):
@@ -85,10 +89,66 @@ CRITICAL RULES:
             elif isinstance(msg, str):
                 return msg
         
+        # Check for steps-based responses (tool calling responses)
+        if hasattr(response, 'steps') and response.steps:
+            # Look for the final step's content
+            for step in reversed(response.steps):  # Check from last step
+                if hasattr(step, 'step_type') and 'inference' in str(step.step_type).lower():
+                    if hasattr(step, 'output') and step.output:
+                        if hasattr(step.output, 'content'):
+                            return step.output.content
+                        elif isinstance(step.output, str):
+                            return step.output
+                
+                # Also check for completion steps
+                if hasattr(step, 'completion') and step.completion:
+                    if hasattr(step.completion, 'content'):
+                        return step.completion.content
+                    elif isinstance(step.completion, str):
+                        return step.completion
+        
+        # Fallback to string representation
         if isinstance(response, str):
             return response
         
+        # Log response structure for debugging
+        self.logger.warning(f"Could not extract content from response. Available attributes: {dir(response) if hasattr(response, '__dict__') else 'No attributes'}")
+        
         return str(response) if response else "No response received"
+
+    def _clean_agent_response(self, response_text: str) -> str:
+        """Clean agent meta-commentary from response text."""
+        if not response_text:
+            return response_text
+        
+        # Remove common agent prefixes
+        prefixes_to_remove = [
+            "The retrieved content is:",
+            "Based on the knowledge_search tool results,",
+            "Here are the relevant patterns:",
+            "The following patterns were found:",
+            "According to the search results,",
+            "The search returned the following:",
+        ]
+        
+        cleaned_text = response_text.strip()
+        
+        for prefix in prefixes_to_remove:
+            if cleaned_text.startswith(prefix):
+                cleaned_text = cleaned_text[len(prefix):].strip()
+        
+        # Remove common agent suffixes
+        suffixes_to_remove = [
+            "These patterns can be used for your Infrastructure as Code needs.",
+            "Hope this helps with your conversion.",
+            "These are the relevant patterns found.",
+        ]
+        
+        for suffix in suffixes_to_remove:
+            if cleaned_text.endswith(suffix):
+                cleaned_text = cleaned_text[:-len(suffix)].strip()
+        
+        return cleaned_text
 
     def create_new_session(self, correlation_id: str) -> str:
         """Create new session for context queries - using agent instance"""
@@ -125,6 +185,11 @@ CRITICAL RULES:
             
             # Extract response content
             response_text = self._extract_response_content(response)
+            
+            # Clean up agent commentary from response
+            if response_text:
+                # Remove agent meta-commentary
+                response_text = self._clean_agent_response(response_text)
             
             # For UI compatibility, return context chunks format
             context_chunks = []
