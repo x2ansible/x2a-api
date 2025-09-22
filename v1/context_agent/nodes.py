@@ -1,139 +1,62 @@
 """
 Context Agent Workflow Nodes
 
-Hybrid approach: Tutorial pattern workflow with strategic ReAct agents.
-Following the Agentic RAG tutorial but using ReAct where reasoning adds value.
+Hybrid Agentic RAG implementation with clean configuration-driven architecture.
+- Workflow orchestration follows LangGraph tutorial patterns
+- Intelligent reasoning handled by specialized ReAct agents from config
+- All prompts externalized to v1/config.yaml for maintainability
 """
 
-from typing import Literal
+from typing import Literal, Any
 from langgraph.graph import MessagesState
-from langgraph.store.base import BaseStore
-from langgraph.prebuilt import create_react_agent
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from langchain_core.messages import AIMessage
+
+# Make BaseStore import optional for compatibility across LangGraph versions
+try:
+    from langgraph.store.base import BaseStore
+except ImportError:
+    # Fallback for older LangGraph versions
+    BaseStore = Any
 
 from context_agent.state import get_user_id_from_config, log_query_pattern, save_successful_retrieval
-from context_agent.tools import get_retriever_tool, neo4j_vector_search, neo4j_graph_query
+from context_agent.tools import get_retriever_tool
 from context_agent.utils import get_llm, get_prompt
+from context_agent.agents import create_retrieval_react_agent, create_grading_react_agent
 
 
 # ============================================================================
-# GLOBAL COMPONENTS
-# ============================================================================
-
-llm = get_llm()
-retriever_tool = get_retriever_tool()
-
-
-# ============================================================================
-# PROMPTS (Loaded from Configuration)
-# ============================================================================
-
-# Note: Prompts are now loaded from config.yaml via get_prompt() function
-
-
-# ============================================================================
-# DOCUMENT GRADING TOOLS FOR REACT AGENT
-# ============================================================================
-
-class GradeDocuments(BaseModel):
-    """Grade documents using a binary score for relevance check."""
-    binary_score: str = Field(
-        description="Relevance score: 'yes' if relevant, or 'no' if not relevant"
-    )
-
-
-@tool
-def grade_document_relevance(question: str, context: str) -> str:
-    """Grade the relevance of retrieved context to the user question."""
-    
-    prompt = get_prompt('grade').format(question=question, context=context)
-    response = llm.with_structured_output(GradeDocuments).invoke(
-        [{"role": "user", "content": prompt}]
-    )
-    
-    score = response.binary_score
-    print(f"📈 Document relevance score: {score}")
-    
-    return f"Document relevance: {score}. {'Relevant content found.' if score == 'yes' else 'Content not relevant to question.'}"
-
-
-@tool  
-def analyze_question_intent(question: str) -> str:
-    """Analyze the user's question to understand what they're really asking about."""
-    
-    analysis_prompt = f"""Analyze this Ansible automation question to understand the intent:
-
-Question: {question}
-
-What is the user really asking about? Consider:
-- Are they asking about best practices?
-- Do they need specific implementation guidance?
-- Are they looking for troubleshooting help?
-- Do they want to understand concepts?
-
-Provide a brief analysis of the question intent."""
-
-    response = llm.invoke([{"role": "user", "content": analysis_prompt}])
-    return f"Question analysis: {response.content}"
-
-
-# ============================================================================
-# REACT AGENT FOR RETRIEVAL DECISIONS
-# ============================================================================
-
-def create_retrieval_react_agent():
-    """Create ReAct agent for intelligent retrieval strategy selection"""
-    tools = [neo4j_vector_search, neo4j_graph_query]
-    
-    retrieval_system_prompt = get_prompt('retrieval_system')
-
-    return create_react_agent(llm, tools, prompt=retrieval_system_prompt)
-
-
-# ============================================================================
-# REACT AGENT FOR DOCUMENT GRADING
-# ============================================================================
-
-def create_grading_react_agent():
-    """Create ReAct agent for intelligent document grading with reasoning"""
-    tools = [grade_document_relevance, analyze_question_intent]
-    
-    grading_system_prompt = get_prompt('grading_system')
-
-    return create_react_agent(llm, tools, prompt=grading_system_prompt)
-
-
-# ============================================================================
-# WORKFLOW NODES (Tutorial Pattern)
+# WORKFLOW NODES - Configuration-Driven Implementation
 # ============================================================================
 
 def generate_query_or_respond(state: MessagesState, config: RunnableConfig = None, *, store: BaseStore = None) -> MessagesState:
-    """Generate query or respond using ReAct agent with Neo4j tools"""
+    """
+    Generate query or respond using configured ReAct retrieval agent.
+    
+    Uses intelligent retrieval strategy selection based on prompts from config.yaml.
+    Handles memory logging and graceful fallback if agent fails.
+    """
     print("🤖 Generating query or response with ReAct agent...")
     
     # Handle memory logging before processing
     if store and config:
         try:
             user_id = get_user_id_from_config(config)
-            human_msg = state["messages"][-1]
-            log_query_pattern(store, user_id, human_msg.content)
+            # Ensure user_id is not empty to avoid namespace error
+            if user_id and user_id.strip():
+                human_msg = state["messages"][-1]
+                log_query_pattern(store, user_id, human_msg.content)
         except Exception as e:
             print(f"⚠️ Memory error (continuing): {e}")
     
     # Get the user's question
     user_question = state["messages"][-1].content
     
-    # Use ReAct agent for intelligent retrieval
+    # Create ReAct agent with embedded system prompt
     retrieval_agent = create_retrieval_react_agent()
     
-    retrieval_request = f"""Please retrieve relevant Ansible automation patterns for this question:
-
-Question: {user_question}
-
-Analyze the question and use the most appropriate retrieval tool(s) to find relevant information."""
+    # Use configured prompt template for retrieval request
+    retrieval_request = get_prompt('retrieval_request').format(user_question=user_question)
     
     retrieval_messages = [{"role": "user", "content": retrieval_request}]
     result = retrieval_agent.invoke({"messages": retrieval_messages})
@@ -148,27 +71,30 @@ Analyze the question and use the most appropriate retrieval tool(s) to find rele
         return {"messages": [ai_response]}
     
     # Fallback to simple LLM response if agent fails
+    llm = get_llm()
+    retriever_tool = get_retriever_tool()
     response = llm.bind_tools([retriever_tool]).invoke(state["messages"])
     return {"messages": [response]}
 
 
 def grade_documents(state: MessagesState, config: RunnableConfig = None, *, store: BaseStore = None) -> Literal["generate_answer", "rewrite_question"]:
-    """Determine whether the retrieved documents are relevant using ReAct agent"""
+    """
+    Determine document relevance using configured ReAct grading agent.
+    
+    Routes workflow based on intelligent document evaluation:
+    - 'generate_answer' if documents are relevant
+    - 'rewrite_question' if documents need better retrieval
+    """
     print("📊 Grading documents with ReAct agent...")
     
     question = state["messages"][0].content
     context = state["messages"][-1].content
     
-    # Use ReAct agent for intelligent grading
+    # Create ReAct agent with config-based prompts
     grading_agent = create_grading_react_agent()
     
-    grading_request = f"""Please analyze and grade these retrieved documents:
-
-Question: {question}
-
-Retrieved Context: {context}
-
-Determine if the retrieved content is relevant to answering the user's question."""
+    # Use configured prompt template for grading request
+    grading_request = get_prompt('grading_request').format(question=question, context=context)
 
     grading_messages = [{"role": "user", "content": grading_request}]
     result = grading_agent.invoke({"messages": grading_messages})
@@ -180,41 +106,87 @@ Determine if the retrieved content is relevant to answering the user's question.
             if hasattr(message, 'content'):
                 agent_output += message.content
     
-    # Look for decision in agent output
+    # Look for decision in agent output (based on grading_system prompt)
     if "DECISION: relevant" in agent_output:
-        print(" Documents are relevant")
+        print("✅ Documents are relevant")
+        decision = "generate_answer"
+    else:
+        print("🔄 Documents not relevant - rewriting question")
+        decision = "rewrite_question"
+    
+    # Return state update with grading decision stored
+    return {"messages": [{"role": "assistant", "content": f"Grading decision: {decision}"}]}
+
+
+def route_after_grading(state: MessagesState) -> Literal["generate_answer", "rewrite_question"]:
+    """
+    Route based on document grading decision.
+    
+    Args:
+        state: Current conversation state containing grading decision
+        
+    Returns:
+        Next node to execute: "generate_answer" or "rewrite_question"
+    """
+    # Look for the grading decision in the latest message
+    latest_message = state["messages"][-1]
+    
+    # Handle both dict and object message formats
+    if hasattr(latest_message, 'content'):
+        content = latest_message.content
+    else:
+        content = latest_message.get('content', '')
+    
+    if "generate_answer" in content:
         return "generate_answer"
     else:
-        print(" Documents not relevant - rewriting question")
         return "rewrite_question"
 
 
 def rewrite_question(state: MessagesState, config: RunnableConfig = None, *, store: BaseStore = None) -> MessagesState:
-    """Rewrite the original user question (Tutorial Pattern)"""
+    """
+    Rewrite user question for better retrieval using configured prompt.
+    
+    Transforms original question to be more specific and searchable for
+    Ansible automation patterns based on rewrite template from config.yaml.
+    """
     print("✏️ Rewriting question...")
     
     messages = state["messages"]
     question = messages[0].content
+    
+    # Use configured prompt template for question rewriting
     prompt = get_prompt('rewrite').format(question=question)
+    llm = get_llm()
     response = llm.invoke([{"role": "user", "content": prompt}])
     return {"messages": [{"role": "user", "content": response.content}]}
 
 
 def generate_answer(state: MessagesState, config: RunnableConfig = None, *, store: BaseStore = None) -> MessagesState:
-    """Generate an answer using retrieved context (Tutorial Pattern)"""
+    """
+    Generate final answer using retrieved context and configured prompt.
+    
+    Creates actionable Ansible automation guidance based on the generate
+    template from config.yaml. Saves successful patterns to memory for learning.
+    """
     print("💬 Generating final answer...")
     
     question = state["messages"][0].content
     context = state["messages"][-1].content
+    
+    # Use configured prompt template for answer generation
     prompt = get_prompt('generate').format(question=question, context=context)
+    llm = get_llm()
     response = llm.invoke([{"role": "user", "content": prompt}])
     
-    # Save successful retrieval pattern to memory
+    # Save successful retrieval pattern to memory for learning
     if store and config:
         try:
             user_id = get_user_id_from_config(config)
-            save_successful_retrieval(store, user_id, question, response.content)
-            print(f"💾 Saved successful retrieval to memory for user {user_id}")
+            # Ensure user_id is not empty to avoid namespace error
+            if user_id and user_id.strip():
+                save_successful_retrieval(store, user_id, question, response.content)
+                print(f"💾 Saved successful retrieval to memory for user {user_id}")
         except Exception as e:
             print(f"⚠️ Memory save error (continuing): {e}")
     

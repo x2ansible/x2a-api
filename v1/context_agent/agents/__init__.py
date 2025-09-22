@@ -1,21 +1,14 @@
 """
-Context Agent Components
+Context Agent - Agent Implementations
 
-Hybrid approach following Agentic RAG tutorial pattern with strategic ReAct agents.
+This package contains the specialized agent implementations used by context agent nodes.
+Separates agent logic from node orchestration for better code organization.
 """
 
-from ..nodes import (
-    generate_query_or_respond,
-    grade_documents,
-    rewrite_question,
-    generate_answer,
-    create_grading_react_agent
-)
+from .retrieval_agent import create_retrieval_react_agent
+from .grading_agent import create_grading_react_agent
 
 __all__ = [
-    "generate_query_or_respond",
-    "grade_documents", 
-    "rewrite_question",
-    "generate_answer",
+    "create_retrieval_react_agent",
     "create_grading_react_agent"
 ]
