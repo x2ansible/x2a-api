@@ -1,0 +1,517 @@
+name: 🚀 V1 Agent Testing & Docker Build Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: 
+      - 'v1/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'v1/**'
+      - '.github/workflows/**'
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # ============================================================================
+  # TIER 1: INFRASTRUCTURE TESTING
+  # ============================================================================
+  infrastructure-tests:
+    name: 🏗️ Infrastructure Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    services:
+      neo4j:
+        image: neo4j:5.13
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+          NEO4J_dbms_security_procedures_unrestricted: apoc.*
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p testpassword 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: 📦 Install Dependencies
+      run: |
+        cd v1
+        pip install -r requirements.txt
+
+    - name: 🔧 Setup Test Configuration
+      run: |
+        cd v1
+        cp testing/infrastructure/config.yaml config.yaml
+        # Override with test values
+        cat > config.yaml << EOF
+        llm:
+          base_url: "https://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com/v1/openai/v1"
+          model: "llama-4-scout-17b-16e-w4a16"
+          api_key: "dummy-key"
+          temperature: 0.1
+          max_tokens: 4000
+
+        neo4j:
+          uri: "neo4j://localhost:7687"
+          username: "neo4j"
+          password: "testpassword"
+          database: "neo4j"
+
+        testing:
+          timeout_seconds: 300
+          retry_attempts: 3
+          parallel_execution: true
+        EOF
+
+    - name: 🏗️ Run Infrastructure Tests
+      run: |
+        cd v1
+        python testing/infrastructure/runner.py
+      env:
+        PYTHONPATH: ${{ github.workspace }}/v1
+
+    - name: 📊 Upload Infrastructure Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: infrastructure-test-results
+        path: v1/testing/infrastructure/results/
+        retention-days: 30
+
+  # ============================================================================
+  # TIER 2: FUNCTIONAL TESTING (Parallel Execution)
+  # ============================================================================
+  functional-tests:
+    name: 🧪 Functional Tests
+    runs-on: ubuntu-latest
+    needs: infrastructure-tests
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [infrastructure, validation, context, code_generation]
+    
+    services:
+      neo4j:
+        image: neo4j:5.13
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+          NEO4J_dbms_security_procedures_unrestricted: apoc.*
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p testpassword 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: 📦 Install Dependencies
+      run: |
+        cd v1
+        pip install -r requirements.txt
+        # Install ansible-lint for validation tests
+        pip install ansible-lint
+
+    - name: 🔧 Setup Test Configuration
+      run: |
+        cd v1
+        cp testing/functional/config.yaml config.yaml
+        # Override with test values for GitHub Actions
+        cat > config.yaml << EOF
+        llm:
+          base_url: "https://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com/v1/openai/v1"
+          model: "llama-4-scout-17b-16e-w4a16"
+          api_key: "dummy-key"
+          temperature: 0.1
+          max_tokens: 4000
+
+        neo4j:
+          uri: "neo4j://localhost:7687"
+          username: "neo4j"
+          password: "testpassword"
+          database: "neo4j"
+
+        testing:
+          timeout_seconds: 1800  # 30 minutes for functional tests
+          retry_attempts: 2
+          parallel_execution: false  # Sequential for stability in CI
+        EOF
+
+    - name: 🧪 Run Functional Tests - ${{ matrix.agent }}
+      run: |
+        cd v1
+        timeout 25m python testing/functional/run_all_functional_tests.py --agents ${{ matrix.agent }}
+      env:
+        PYTHONPATH: ${{ github.workspace }}/v1
+
+    - name: 📊 Upload Functional Test Results - ${{ matrix.agent }}
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: functional-test-results-${{ matrix.agent }}
+        path: v1/testing/functional/results/
+        retention-days: 30
+
+  # ============================================================================
+  # TIER 3: EVALUATION TESTING (Parallel Execution)
+  # ============================================================================
+  evaluation-tests:
+    name: 📈 Evaluation Tests
+    runs-on: ubuntu-latest
+    needs: functional-tests
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        eval_type: [trajectory, quality, performance]
+    
+    services:
+      neo4j:
+        image: neo4j:5.13
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+          NEO4J_dbms_security_procedures_unrestricted: apoc.*
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p testpassword 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: 📦 Install Dependencies
+      run: |
+        cd v1
+        pip install -r requirements.txt
+        pip install ansible-lint
+
+    - name: 🔧 Setup Test Configuration
+      run: |
+        cd v1
+        cp testing/evaluations/config.yaml config.yaml
+        # Override with test values
+        cat > config.yaml << EOF
+        llm:
+          base_url: "https://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com/v1/openai/v1"
+          model: "llama-4-scout-17b-16e-w4a16"
+          api_key: "dummy-key"
+          temperature: 0.1
+          max_tokens: 4000
+
+        neo4j:
+          uri: "neo4j://localhost:7687"
+          username: "neo4j"
+          password: "testpassword"
+          database: "neo4j"
+
+        testing:
+          timeout_seconds: 1200  # 20 minutes for evaluations
+          retry_attempts: 2
+        EOF
+
+    - name: 📈 Run Evaluation Tests - ${{ matrix.eval_type }}
+      run: |
+        cd v1
+        timeout 18m python testing/evaluations/run_all_evaluations.py --types ${{ matrix.eval_type }}
+      env:
+        PYTHONPATH: ${{ github.workspace }}/v1
+
+    - name: 📊 Upload Evaluation Results - ${{ matrix.eval_type }}
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: evaluation-results-${{ matrix.eval_type }}
+        path: v1/testing/evaluations/results/
+        retention-days: 30
+
+  # ============================================================================
+  # INTEGRATION TESTING (Final Verification)
+  # ============================================================================
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    needs: [functional-tests, evaluation-tests]
+    timeout-minutes: 15
+    
+    services:
+      neo4j:
+        image: neo4j:5.13
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+          NEO4J_dbms_security_procedures_unrestricted: apoc.*
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p testpassword 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: 📦 Install Dependencies
+      run: |
+        cd v1
+        pip install -r requirements.txt
+        pip install ansible-lint
+
+    - name: 🔧 Setup Test Configuration
+      run: |
+        cd v1
+        # Use production-like configuration for integration tests
+        cat > config.yaml << EOF
+        llm:
+          base_url: "https://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com/v1/openai/v1"
+          model: "llama-4-scout-17b-16e-w4a16"
+          api_key: "dummy-key"
+          temperature: 0.1
+          max_tokens: 4000
+
+        neo4j:
+          uri: "neo4j://localhost:7687"
+          username: "neo4j"
+          password: "testpassword"
+          database: "neo4j"
+        EOF
+
+    - name: 🔗 Run Integration Tests
+      run: |
+        cd v1
+        timeout 12m python testing/evaluations/run_all_evaluations.py --types integration
+      env:
+        PYTHONPATH: ${{ github.workspace }}/v1
+
+    - name: 🎯 Generate Final Test Report
+      run: |
+        cd v1
+        echo "# 🎯 V1 Agent Testing Summary" > test_summary.md
+        echo "" >> test_summary.md
+        echo "## 📊 Test Results Overview" >> test_summary.md
+        echo "-  Infrastructure Tests: Passed" >> test_summary.md
+        echo "-  Functional Tests: Passed" >> test_summary.md
+        echo "-  Evaluation Tests: Passed" >> test_summary.md
+        echo "-  Integration Tests: Passed" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "## 🚀 Ready for Docker Build" >> test_summary.md
+        echo "All tests passed successfully. V1 agents are production-ready!" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "### 🤖 Agents Tested:" >> test_summary.md
+        echo "- Infrastructure Analysis Agent" >> test_summary.md
+        echo "- Validation Agent" >> test_summary.md
+        echo "- Context Agent" >> test_summary.md
+        echo "- Code Generation Agent" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "### 🧪 Test Types Executed:" >> test_summary.md
+        echo "- Infrastructure connectivity and configuration" >> test_summary.md
+        echo "- End-to-end functional testing with real examples" >> test_summary.md
+        echo "- Trajectory, quality, and performance evaluations" >> test_summary.md
+        echo "- Agent-to-agent integration verification" >> test_summary.md
+
+    - name: 📊 Upload Integration Results & Summary
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: integration-test-results
+        path: |
+          v1/testing/evaluations/results/
+          v1/test_summary.md
+        retention-days: 30
+
+  # ============================================================================
+  # DOCKER BUILD (Only if all tests pass)
+  # ============================================================================
+  docker-build:
+    name: 🐳 Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: [infrastructure-tests, functional-tests, evaluation-tests, integration-tests]
+    if: success() # Only run if all previous jobs succeeded
+    timeout-minutes: 20
+
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+
+    - name: 🏷️ Generate Image Tags
+      id: tags
+      run: |
+        # Generate tags based on branch and commit
+        BRANCH_NAME=${GITHUB_REF#refs/heads/}
+        COMMIT_SHA=${GITHUB_SHA::8}
+        
+        if [[ "${BRANCH_NAME}" == "main" ]]; then
+          echo "tags=x2a-v1:latest,x2a-v1:${COMMIT_SHA},x2a-v1:main-${COMMIT_SHA}" >> $GITHUB_OUTPUT
+        elif [[ "${BRANCH_NAME}" == "develop" ]]; then
+          echo "tags=x2a-v1:develop,x2a-v1:develop-${COMMIT_SHA}" >> $GITHUB_OUTPUT
+        else
+          echo "tags=x2a-v1:${BRANCH_NAME}-${COMMIT_SHA}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔐 Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ secrets.CONTAINER_REGISTRY }}
+        username: ${{ secrets.REGISTRY_USERNAME }}
+        password: ${{ secrets.REGISTRY_PASSWORD }}
+
+    - name: 🏗️ Build and Push Docker Image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./v1
+        push: true
+        tags: ${{ steps.tags.outputs.tags }}
+        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        labels: |
+          org.opencontainers.image.title=X2A V1 Agents
+          org.opencontainers.image.description=Production-ready infrastructure automation agents
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.created=${{ github.event.repository.pushed_at }}
+
+    - name: 🎉 Build Success Notification
+      run: |
+        echo "🎉 Docker image built and pushed successfully!"
+        echo "📦 Images: ${{ steps.tags.outputs.tags }}"
+        echo " All tests passed - V1 agents are production-ready!"
+
+  # ============================================================================
+  # TEST SUMMARY & NOTIFICATION
+  # ============================================================================
+  test-summary:
+    name: 📋 Test Summary & Notification
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: always() # Run even if some tests fail
+    
+    steps:
+    - name: 📥 Download All Test Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: test-results
+
+    - name: 📊 Generate Comprehensive Test Report
+      run: |
+        echo "# 🎯 Comprehensive V1 Testing Report" > TESTING_REPORT.md
+        echo "" >> TESTING_REPORT.md
+        echo "**Repository:** ${{ github.repository }}" >> TESTING_REPORT.md
+        echo "**Branch:** ${{ github.ref_name }}" >> TESTING_REPORT.md
+        echo "**Commit:** ${{ github.sha }}" >> TESTING_REPORT.md
+        echo "**Workflow:** ${{ github.run_id }}" >> TESTING_REPORT.md
+        echo "**Date:** $(date -u)" >> TESTING_REPORT.md
+        echo "" >> TESTING_REPORT.md
+        
+        # Check job results
+        if [[ "${{ needs.infrastructure-tests.result }}" == "success" ]]; then
+          echo "-  Infrastructure Tests: PASSED" >> TESTING_REPORT.md
+        else
+          echo "-  Infrastructure Tests: FAILED" >> TESTING_REPORT.md
+        fi
+        
+        if [[ "${{ needs.functional-tests.result }}" == "success" ]]; then
+          echo "-  Functional Tests: PASSED" >> TESTING_REPORT.md
+        else
+          echo "-  Functional Tests: FAILED" >> TESTING_REPORT.md
+        fi
+        
+        if [[ "${{ needs.evaluation-tests.result }}" == "success" ]]; then
+          echo "-  Evaluation Tests: PASSED" >> TESTING_REPORT.md
+        else
+          echo "-  Evaluation Tests: FAILED" >> TESTING_REPORT.md
+        fi
+        
+        if [[ "${{ needs.integration-tests.result }}" == "success" ]]; then
+          echo "-  Integration Tests: PASSED" >> TESTING_REPORT.md
+        else
+          echo "-  Integration Tests: FAILED" >> TESTING_REPORT.md
+        fi
+        
+        if [[ "${{ needs.docker-build.result }}" == "success" ]]; then
+          echo "-  Docker Build: PASSED" >> TESTING_REPORT.md
+          echo "" >> TESTING_REPORT.md
+          echo "🚀 **STATUS: READY FOR PRODUCTION**" >> TESTING_REPORT.md
+        else
+          echo "-  Docker Build: FAILED" >> TESTING_REPORT.md
+          echo "" >> TESTING_REPORT.md
+          echo "🚫 **STATUS: NOT READY FOR PRODUCTION**" >> TESTING_REPORT.md
+        fi
+        
+        echo "" >> TESTING_REPORT.md
+        echo "## 📁 Artifacts Available:" >> TESTING_REPORT.md
+        echo "- Infrastructure test results" >> TESTING_REPORT.md
+        echo "- Functional test results (per agent)" >> TESTING_REPORT.md
+        echo "- Evaluation results (per type)" >> TESTING_REPORT.md
+        echo "- Integration test results" >> TESTING_REPORT.md
+
+    - name: 📋 Upload Comprehensive Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: comprehensive-testing-report
+        path: TESTING_REPORT.md
+        retention-days: 90
+
+    - name: 💬 Add PR Comment (if PR)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('TESTING_REPORT.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: report
+          });

@@ -4,8 +4,9 @@ llamastack:
 
 # LLM Model configuration (separate from LlamaStack)
 llm:
-  api_base: "http://llm-ai-agent.apps.cluster-p4mxv.p4mxv.sandbox338.opentlc.com/v1"
-  model: "meta-llama/Llama-3.1-8B-Instruct"
+  api_base: "https://llama-4-scout-17b-16e-w4a16-maas-apicast-production.apps.prod.rhoai.rh-aiservices-bu.com:443/v1"
+  model: "llama-4-scout-17b-16e-w4a16"
+  api_key: "key"
 
 file_storage:
   upload_dir: "./uploads"
@@ -25,6 +26,25 @@ github_ingestion:
       # token: "your_github_token_here"  # Optional - add if needed for private repos
 
 agent_instructions:
+  infrastructure_analysis: |
+    You are an expert Infrastructure Analysis Agent specializing in multi-platform infrastructure code analysis.
+    
+    You analyze Chef, Puppet, Salt, and BladeLogic infrastructure code to provide:
+    - Platform detection and classification
+    - Complexity assessment and scoring
+    - Migration strategy recommendations
+    - Cross-platform conversion guidance
+    - Technical debt identification
+    
+    Focus areas:
+    - Resource complexity analysis (packages, services, templates, files)
+    - Dependency graph analysis and circular dependency detection
+    - Template complexity and variable usage patterns
+    - Custom resource/module complexity assessment
+    - Migration effort estimation with timeline and risk assessment
+    
+    Provide actionable insights for infrastructure modernization and platform migration.
+
   chef_analysis: |
     You are an expert Chef cookbook analyst specializing in infrastructure automation and migration to modern IaC platforms.
     You will be provided with:
@@ -126,6 +146,24 @@ agent_instructions:
 
 
 prompts:
+  infrastructure_analysis: |
+    You are analyzing infrastructure code for platform: {platform}
+    
+    ANALYSIS CONTEXT:
+    {analysis_context}
+    
+    EXTRACTED FACTS:
+    {facts}
+    
+    ANALYSIS REQUIREMENTS:
+    - Assess complexity based on resource count, dependencies, and custom components
+    - Identify migration challenges and opportunities  
+    - Provide practical recommendations for infrastructure modernization
+    - Estimate effort required for migration or refactoring
+    - Highlight security and operational considerations
+    
+    Provide a comprehensive analysis in structured format focusing on actionable insights.
+
   chef_analysis_enhanced: |
     SYSTEM INSTRUCTION:
     {instruction}
@@ -210,6 +248,17 @@ prompts:
 
 
 agents:
+  - name: "infrastructure_analysis"
+    model: "llama-4-scout-17b-16e-w4a16"
+    instructions: "{agent_instructions.infrastructure_analysis}"
+    sampling_params:
+      strategy:
+        type: "greedy"
+        temperature: 0.1
+      max_tokens: 4096
+      repetition_penalty: 1.0
+    max_infer_iters: 1
+
   - name: "chef_analysis"
     model: "meta-llama/Llama-3.1-8B-Instruct"
     instructions: "{agent_instructions.chef_analysis}"

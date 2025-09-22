@@ -177,3 +177,8 @@ uploads/random/convert2ansible/
 
 # macOS
 .DS_Store
+
+.ansible
+
+
+.langgraph_api

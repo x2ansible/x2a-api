@@ -1,0 +1,55 @@
+=== UNCOMMITTED CHANGES ===
+ M .gitignore
+ M agents/.DS_Store
+ M config.yaml
+?? .github/workflows/ci-cd-pipeline.yml
+?? v1/
+?? v1_commit_history.txt
+
+=== FILE COUNT IN V1 DIRECTORY ===
+   46079
+Size: 1.1G
+
+=== SUMMARY OF CHANGES FOR V1 COMMIT ===
+total 120
+drwxr-xr-x@ 19 raghurambanda  staff    608 Sep 21 22:26 .
+drwxr-xr-x@ 27 raghurambanda  staff    864 Sep 22 00:07 ..
+-rw-r--r--@  1 raghurambanda  staff   8196 Sep 21 16:21 .DS_Store
+drwxr-xr-x@  5 raghurambanda  staff    160 Sep 19 23:26 .ansible
+-rw-r--r--@  1 raghurambanda  staff    123 Sep 21 22:20 .env
+drwxr-xr-x@  9 raghurambanda  staff    288 Sep 22 00:06 .langgraph_api
+drwxr-xr-x@  6 raghurambanda  staff    192 Sep 21 17:30 .pytest_cache
+-rw-r--r--@  1 raghurambanda  staff    279 Sep 20 16:09 Containerfile
+drwxr-xr-x@  9 raghurambanda  staff    288 Sep 21 21:51 code_gen
+-rw-r--r--@  1 raghurambanda  staff  22553 Sep 21 23:31 config.yaml
+drwxr-xr-x@ 11 raghurambanda  staff    352 Sep 21 16:39 context_agent
+drwxr-xr-x@  5 raghurambanda  staff    160 Sep 21 22:50 deploy
+-rwxr-xr-x@  1 raghurambanda  staff   6137 Sep 21 20:03 entrypoint.sh
+drwxr-xr-x@ 14 raghurambanda  staff    448 Sep 21 22:02 infrastructure_analysis
+-rw-r--r--@  1 raghurambanda  staff    402 Sep 21 22:26 langgraph.json
+-rw-r--r--@  1 raghurambanda  staff   1420 Sep 20 16:14 requirements.txt
+drwxr-xr-x@  8 raghurambanda  staff    256 Sep 21 16:39 validation
+drwxr-xr-x@  8 raghurambanda  staff    256 Sep 19 23:26 venv
+drwxr-xr-x@ 10 raghurambanda  staff    320 Sep 21 21:50 x2a_test_framework
+
+=== TOP-LEVEL V1 DIRECTORY STRUCTURE ===
+total 120
+drwxr-xr-x@ 19 raghurambanda  staff    608 Sep 21 22:26 .
+drwxr-xr-x@ 27 raghurambanda  staff    864 Sep 22 00:07 ..
+-rw-r--r--@  1 raghurambanda  staff   8196 Sep 21 16:21 .DS_Store
+drwxr-xr-x@  5 raghurambanda  staff    160 Sep 19 23:26 .ansible
+-rw-r--r--@  1 raghurambanda  staff    123 Sep 21 22:20 .env
+drwxr-xr-x@  9 raghurambanda  staff    288 Sep 22 00:06 .langgraph_api
+drwxr-xr-x@  6 raghurambanda  staff    192 Sep 21 17:30 .pytest_cache
+-rw-r--r--@  1 raghurambanda  staff    279 Sep 20 16:09 Containerfile
+drwxr-xr-x@  9 raghurambanda  staff    288 Sep 21 21:51 code_gen
+-rw-r--r--@  1 raghurambanda  staff  22553 Sep 21 23:31 config.yaml
+drwxr-xr-x@ 11 raghurambanda  staff    352 Sep 21 16:39 context_agent
+drwxr-xr-x@  5 raghurambanda  staff    160 Sep 21 22:50 deploy
+-rwxr-xr-x@  1 raghurambanda  staff   6137 Sep 21 20:03 entrypoint.sh
+drwxr-xr-x@ 14 raghurambanda  staff    448 Sep 21 22:02 infrastructure_analysis
+-rw-r--r--@  1 raghurambanda  staff    402 Sep 21 22:26 langgraph.json
+-rw-r--r--@  1 raghurambanda  staff   1420 Sep 20 16:14 requirements.txt
+drwxr-xr-x@  8 raghurambanda  staff    256 Sep 21 16:39 validation
+drwxr-xr-x@  8 raghurambanda  staff    256 Sep 19 23:26 venv
+drwxr-xr-x@ 10 raghurambanda  staff    320 Sep 21 21:50 x2a_test_framework

@@ -1,0 +1,16 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "infrastructure_analysis": "./infrastructure_analysis/graph.py:app",
+    "context_agent": "./context_agent/graph.py:app",
+    "code_gen": "./code_gen/graph.py:app",
+    "ansible_validator": "./validation/graph.py:app"
+  },
+  "env": ".env",
+  "config": {
+    "run_timeout": 600,
+    "debug": true,
+    "verbose": true,
+    "multi_user_isolation": true
+  }
+}
