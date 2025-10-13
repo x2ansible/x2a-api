@@ -39,6 +39,7 @@ from llama_stack_client.types.agent_create_params import AgentConfig
 from pathlib import Path
 import os
 import requests
+import httpx
 
 class AgentRegistry:
     def __init__(self, client: LlamaStackClient):
@@ -53,7 +54,6 @@ class AgentRegistry:
                 response = self.client.agents.list()
                 agents_data = response.data if hasattr(response, 'data') else response
             else:
-                import httpx
                 response = httpx.get(f"{self.client.base_url}/v1/agents", timeout=30)
                 response.raise_for_status()
                 data = response.json()
@@ -129,7 +129,6 @@ class AgentRegistry:
             
             # === DEBUG: Verify the created agent has tools ===
             try:
-                import httpx
                 verify_response = httpx.get(f"{self.client.base_url}/v1/agents/{agent_id}", timeout=10)
                 if verify_response.status_code == 200:
                     agent_data = verify_response.json()
@@ -153,7 +152,6 @@ class AgentRegistry:
                 response = self.client.agents.list()
                 agents_data = response.data if hasattr(response, 'data') else response
             else:
-                import httpx
                 response = httpx.get(f"{self.client.base_url}/v1/agents", timeout=30)
                 response.raise_for_status()
                 data = response.json()
@@ -262,19 +260,38 @@ def _vector_db_exists(client: LlamaStackClient, vector_db_id: str) -> bool:
         logger.warning("Vector DB existence check inconclusive: %s", e)
         return False
 
+def _delete_vector_db_if_exists(client: LlamaStackClient, vector_db_id: str = "iac"):
+    """Delete vector database if it exists (clean slate approach)"""
+    try:
+        # Check if vector DB exists by listing all vector DBs
+        existing_dbs = client.vector_dbs.list()
+        exists = any(db.identifier == vector_db_id for db in existing_dbs)
+        
+        if exists:
+            logger.info(f"Deleting existing vector DB: {vector_db_id}")
+            client.vector_dbs.unregister(vector_db_id=vector_db_id)
+            logger.info(f"Successfully deleted vector DB: {vector_db_id}")
+        else:
+            logger.info(f"Vector DB '{vector_db_id}' does not exist, skipping deletion")
+            
+    except Exception as e:
+        logger.warning(f"Failed to delete vector DB '{vector_db_id}': {e}")
+        # Continue anyway - maybe it didn't exist
+
 def _ensure_vector_db(client: LlamaStackClient, vector_db_id: str = "iac"):
     """Ensure vector DB exists - following agentic RAG pattern"""
     try:
         # Try to register vector DB - LlamaStack will handle if it exists
+        # Use the correct pgvector provider that's available in this LlamaStack instance
         payload = {
             "vector_db_id": vector_db_id,
-            "embedding_model": "all-MiniLM-L6-v2",  # Default embedding model
+            "embedding_model": "all-MiniLM-L6-v2",  # Use sentence-transformers provider
             "embedding_dimension": 384,  # Default dimension for all-MiniLM-L6-v2
-            "provider_id": "faiss",  # Use faiss provider instead
+            "provider_id": "pgvector",  # Use the actual available provider
         }
         
         client.vector_dbs.register(**payload)
-        logger.info("Vector DB '%s' registered successfully", vector_db_id)
+        logger.info(f"Vector DB '{vector_db_id}' registered successfully with pgvector provider")
         return True
         
     except Exception as e:
@@ -285,6 +302,138 @@ def _ensure_vector_db(client: LlamaStackClient, vector_db_id: str = "iac"):
         else:
             logger.error("Failed to register Vector DB '%s': %s", vector_db_id, e)
             return False
+
+def _batch_ingest_all_documents(client: LlamaStackClient, vector_db_id: str = "iac"):
+    """Batch ingest all documents (local + GitHub) in one efficient operation"""
+    logger.info("Starting batch ingestion of all documents...")
+    
+    all_documents = []
+    batch_size = 20  # Process in batches of 20 documents
+    
+    # Collect local documents
+    try:
+        local_docs = _collect_local_documents()
+        all_documents.extend(local_docs)
+        logger.info(f"Collected {len(local_docs)} local documents")
+    except Exception as e:
+        logger.warning(f"Failed to collect local documents: {e}")
+    
+    # Collect GitHub documents  
+    try:
+        github_docs = _collect_github_documents()
+        all_documents.extend(github_docs)
+        logger.info(f"Collected {len(github_docs)} GitHub documents")
+    except Exception as e:
+        logger.warning(f"Failed to collect GitHub documents: {e}")
+    
+    if not all_documents:
+        logger.warning("No documents found for ingestion")
+        return
+    
+    # Batch insert all documents
+    logger.info(f"📦 Batch inserting {len(all_documents)} documents in batches of {batch_size}...")
+    
+    total_batches = (len(all_documents) + batch_size - 1) // batch_size
+    successful_batches = 0
+    
+    for batch_idx in range(0, len(all_documents), batch_size):
+        batch_docs = all_documents[batch_idx:batch_idx + batch_size]
+        batch_num = (batch_idx // batch_size) + 1
+        
+        # Convert to RAGDocument format
+        rag_documents = []
+        for i, (content, metadata) in enumerate(batch_docs):
+            doc_id = f"doc_{batch_idx + i}_{hash(content) % 100000}"
+            rag_doc = RAGDocument(
+                document_id=doc_id,
+                content=content,
+                mime_type="text/plain",
+                metadata=metadata or {}
+            )
+            rag_documents.append(rag_doc)
+        
+        try:
+            client.tool_runtime.rag_tool.insert(
+                documents=rag_documents,
+                vector_db_id=vector_db_id,
+                chunk_size_in_tokens=512
+            )
+            successful_batches += 1
+            logger.info(f"    Batch {batch_num}/{total_batches} ({len(batch_docs)} docs)")
+            
+        except Exception as e:
+            logger.warning(f"   ❌ Batch {batch_num}/{total_batches} failed: {e}")
+            continue
+    
+    logger.info(f"🎉 Batch ingestion completed: {successful_batches}/{total_batches} batches successful")
+
+def _collect_local_documents():
+    """Collect documents from context_agent docs directory"""
+    documents = []
+    docs_dir = Path(__file__).parent / "agents" / "context_agent" / "docs"
+    
+    if not docs_dir.exists():
+        return documents
+    
+    for md_file in docs_dir.glob("**/*.md"):
+        try:
+            content = md_file.read_text(encoding='utf-8')
+            metadata = {
+                "source": str(md_file),
+                "filename": md_file.name,
+                "type": "local_doc"
+            }
+            documents.append((content, metadata))
+        except Exception as e:
+            logger.warning(f"Failed to read {md_file}: {e}")
+    
+    return documents
+
+def _collect_github_documents():
+    """Collect documents from configured GitHub repositories"""
+    documents = []
+    config = config_loader.config
+    
+    if not hasattr(config, 'github_ingestion') or not config.github_ingestion.get('enabled'):
+        return documents
+    
+    repos = config.github_ingestion.get('repositories', [])
+    
+    for repo_config in repos:
+        try:
+            repo_url = repo_config.get('url')
+            if not repo_url:
+                continue
+                
+            # Basic GitHub API to get README or docs
+            # This is a simplified implementation - expand as needed
+            
+            # Extract owner/repo from GitHub URL
+            parts = repo_url.replace('https://github.com/', '').split('/')
+            if len(parts) >= 2:
+                owner, repo = parts[0], parts[1]
+                
+                # Get README
+                api_url = f"https://api.github.com/repos/{owner}/{repo}/readme"
+                response = requests.get(api_url, timeout=10)
+                
+                if response.status_code == 200:
+                    import base64
+                    readme_data = response.json()
+                    content = base64.b64decode(readme_data['content']).decode('utf-8')
+                    
+                    metadata = {
+                        "source": repo_url,
+                        "filename": readme_data.get('name', 'README.md'),
+                        "type": "github_doc",
+                        "repository": f"{owner}/{repo}"
+                    }
+                    documents.append((content, metadata))
+                    
+        except Exception as e:
+            logger.warning(f"Failed to fetch GitHub repo {repo_config}: {e}")
+    
+    return documents
 
 def _ingest_startup_documents(client: LlamaStackClient, vector_db_id: str = "iac"):
     """Ingest documents from context_agent docs directory at startup - following agentic RAG pattern"""
@@ -511,7 +660,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting X2A Agents API ...")
 
     try:
-        client = LlamaStackClient(base_url=llamastack_base_url)
+        # Use HTTPS URL but disable SSL verification globally for this process
+        import ssl
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        # Set SSL context to not verify certificates
+        ssl._create_default_https_context = ssl._create_unverified_context
+        
+        client = LlamaStackClient(base_url="https://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com")
+        logger.info(f"LlamaStack client initialized with SSL verification disabled: {llamastack_base_url}")
         agent_registry = AgentRegistry(client)
         app.state.client = client
         app.state.agent_registry = agent_registry
@@ -540,7 +697,6 @@ async def lifespan(app: FastAPI):
             response = client.agents.list()
             agents_data = response.data if hasattr(response, 'data') else response
         else:
-            import httpx
             response = httpx.get(f"{client.base_url}/v1/agents", timeout=30)
             response.raise_for_status()
             data = response.json()
@@ -589,7 +745,6 @@ async def lifespan(app: FastAPI):
             response = client.agents.list()
             agents_data = response.data if hasattr(response, 'data') else response
         else:
-            import httpx
             response = httpx.get(f"{client.base_url}/v1/agents", timeout=30)
             response.raise_for_status()
             data = response.json()
@@ -662,27 +817,41 @@ async def lifespan(app: FastAPI):
         else:
             logger.info(f"No context agent in config, using default vector DB: {vector_db_id}")
         
-        # Create ContextAgent with own Agent instance (agentic RAG pattern)
+        # Create ContextAgent using registered agent (prevents creating unnamed agents)
+        context_agent_id = None
+        context_session_id = None
+        
+        if "context" in registered_agents:
+            context_info = registered_agents["context"]
+            context_agent_id = context_info["agent_id"]
+            context_session_id = context_info["session_id"]
+            logger.info(f"Using registered context agent: {context_agent_id}")
+        
         app.state.context_agent = ContextAgent(
             client=client,
-            vector_db_id=vector_db_id
+            vector_db_id=vector_db_id,
+            agent_id=context_agent_id,
+            session_id=context_session_id,
+            model=config_loader.get_llamastack_model()  # Use correct model from config
         )
-        logger.info(f"ContextAgent ready with agentic RAG pattern: vector_db={vector_db_id}")
+        logger.info(f"ContextAgent ready with registered agent pattern: vector_db={vector_db_id}, agent_id={context_agent_id}")
         
-        # === VECTOR DB SETUP AND INGESTION (STARTUP) ===
-        logger.info("Setting up vector database and ingesting documents...")
+        # === VECTOR DB SETUP - CLEAN SLATE APPROACH ===
+        logger.info("Setting up vector database with clean slate approach...")
         
-        # Ensure vector DB exists
+        # Delete existing vector DB if it exists (clean slate)
+        _delete_vector_db_if_exists(client, vector_db_id)
+        
+        # Create fresh vector DB
         vector_db_ready = _ensure_vector_db(client, vector_db_id)
         
         if vector_db_ready:
-            # Ingest local documents from context_agent/docs directory
-            _ingest_startup_documents(client, vector_db_id)
+            logger.info(f"Fresh vector DB '{vector_db_id}' created successfully")
             
-            # Ingest documents from configured GitHub repositories
-            _ingest_github_repositories(client, vector_db_id)
+            # One-time batch ingestion of all documents
+            _batch_ingest_all_documents(client, vector_db_id)
             
-            logger.info(f"Vector DB setup and ingestion completed for: {vector_db_id}")
+            logger.info(f"Clean vector DB setup completed for: {vector_db_id}")
         else:
             logger.warning(f"Vector DB setup failed for: {vector_db_id}")
         

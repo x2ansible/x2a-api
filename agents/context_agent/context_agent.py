@@ -8,60 +8,30 @@ class ContextAgent:
     """
     Agentic RAG ContextAgent - Creates own Agent instance with defined instructions and tools
     """
-    def __init__(self, client: LlamaStackClient, vector_db_id: str, model: str = "meta-llama/Llama-3.1-8B-Instruct"):
+    def __init__(self, client: LlamaStackClient, vector_db_id: str, agent_id: str = None, session_id: str = None, model: str = "llama-4-scout-17b-16e-w4a16"):
         self.client = client
         self.vector_db_id = vector_db_id
         self.model = model
+        self.agent_id = agent_id
+        self.session_id = session_id
         
         # Use shared logging utilities with correlation ID
         self.logger = create_correlation_logger("context-agent", "context-agent-init")
 
-        # Create own Agent instance following agentic RAG pattern
-        self.agent = self._create_agent()
+        # Follow same pattern as ChefAnalysisAgent and CodeGeneratorAgent
+        # Use registered agent_id directly with client calls - no Agent() wrapper needed
+        if agent_id:
+            self.logger.info(f"Using existing registered agent: {agent_id}")
+            # No Agent wrapper needed - use client directly like other agents
+        else:
+            self.logger.warning("No agent_id provided - this should not happen with proper startup!")
+            raise ValueError("ContextAgent requires agent_id from registered agent")
         
-        self.logger.info("ContextAgent initialized with own Agent instance")
+        self.logger.info("ContextAgent initialized")
         self.logger.info(f"Vector DB: {self.vector_db_id}")
         self.logger.info(f"Model: {self.model}")
+        self.logger.info(f"Agent ID: {self.agent_id}")
 
-    def _create_agent(self) -> Agent:
-        """Create RAG agent with knowledge search capabilities - following agentic RAG pattern."""
-        instructions = """You are a RAG retrieval assistant specializing in Infrastructure as Code patterns.
-
-MANDATORY WORKFLOW - FOLLOW EXACTLY:
-1. IMMEDIATELY call the knowledge_search tool with the user's exact input as the query parameter.
-2. WAIT for the complete tool response with retrieved content.
-3. Extract the raw content from the tool results and return it EXACTLY as retrieved.
-4. If no relevant content is found, respond: "No relevant patterns found for this input."
-
-CRITICAL RULES:
-- NEVER respond without first calling the knowledge_search tool
-- NEVER generate answers from your own knowledge
-- ALWAYS use the user's input as the search query
-- Return ONLY the raw retrieved content - NO prefixes like "The retrieved content is:"
-- NO commentary, NO introduction, NO conclusion text
-- DO NOT add phrases like "Based on the knowledge_search tool results"
-- Extract and return the pure content from the tool results directly
-- If tool returns multiple chunks, concatenate them without extra text"""
-
-        tools = [
-            {
-                "name": "builtin::rag/knowledge_search",
-                "args": {
-                    "vector_db_ids": [self.vector_db_id],
-                    "top_k": 3,  # Reduced from 5 to 3 for stability
-                },
-            }
-        ]
-
-        agent = Agent(
-            client=self.client,
-            model=self.model,
-            instructions=instructions,
-            tools=tools,
-        )
-        
-        self.logger.info(f"Created RAG agent with model: {self.model}")
-        return agent
 
     def _sse(self, payload: Dict[str, Any]) -> bytes:
         """Server-sent events formatter for streaming responses"""
@@ -77,9 +47,24 @@ CRITICAL RULES:
             elif isinstance(output_msg, str):
                 return output_msg
         
-        # Check for content attribute
+        # Check for content attribute (handles MockResponse with turn object)
         if hasattr(response, 'content') and response.content:
-            return response.content
+            content = response.content
+            # If content is already a string (from output_message.content), return it
+            if isinstance(content, str):
+                return content
+            # If content is a turn object, extract from its steps like CodeGeneratorAgent
+            elif hasattr(content, 'steps') and content.steps:
+                # Process steps like CodeGeneratorAgent does
+                for step in reversed(content.steps):
+                    if hasattr(step, 'step_type') and str(step.step_type) == "StepType.inference":
+                        if hasattr(step, 'model_response'):
+                            model_resp = step.model_response
+                            if hasattr(model_resp, 'content'):
+                                return model_resp.content
+            # Otherwise try to convert to string
+            else:
+                return str(content)
         
         # Check message attribute
         if hasattr(response, 'message'):
@@ -151,10 +136,15 @@ CRITICAL RULES:
         return cleaned_text
 
     def create_new_session(self, correlation_id: str) -> str:
-        """Create new session for context queries - using agent instance"""
+        """Create new session for context queries - using direct client calls like other agents"""
         try:
             session_name = f"context-query-{correlation_id}-{uuid.uuid4()}"
-            session_id = self.agent.create_session(session_name)
+            response = self.client.agents.session.create(
+                agent_id=self.agent_id,
+                session_name=session_name
+            )
+            session_id = response.session_id
+            
             # Create logger with correlation ID for this session
             session_logger = create_correlation_logger("context-agent", correlation_id)
             session_logger.info(f"Created context session: {session_id} for correlation: {correlation_id}")
@@ -162,7 +152,11 @@ CRITICAL RULES:
         except Exception as e:
             self.logger.error(f"Failed to create session: {e}")
             # Create a fallback session
-            fallback_session_id = self.agent.create_session(f"fallback-{uuid.uuid4()}")
+            fallback_response = self.client.agents.session.create(
+                agent_id=self.agent_id,
+                session_name=f"fallback-{uuid.uuid4()}"
+            )
+            fallback_session_id = fallback_response.session_id
             self.logger.info(f"Using fallback session: {fallback_session_id}")
             return fallback_session_id
 
@@ -174,17 +168,69 @@ CRITICAL RULES:
         query_logger.info(f"Context query: {repr(code)[:100]}...")
         
         try:
-            # Use agentic approach - let agent handle the RAG query
-            session_id = self.agent.create_session(f"context-{uuid.uuid4()}")
+            # Use direct client calls like ChefAnalysisAgent and CodeGeneratorAgent
+            session_id = self.session_id or self.create_new_session(correlation_id)
             
-            response = self.agent.create_turn(
-                messages=[{"role": "user", "content": code}],
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
                 session_id=session_id,
-                stream=False
+                messages=[{"role": "user", "content": code}],
+                stream=True
             )
             
+            # Process streaming response EXACTLY like CodeGeneratorAgent
+            turn = None
+            chunk_count = 0
+            last_event_type = None
+            
+            for chunk in generator:
+                chunk_count += 1
+                if hasattr(chunk, 'event') and chunk.event:
+                    event = chunk.event
+                    if hasattr(event, 'payload') and event.payload:
+                        event_type = getattr(event.payload, 'event_type', None)
+                        last_event_type = event_type
+                        if event_type == "turn_complete":
+                            turn = getattr(event.payload, 'turn', None)
+                            break
+                        elif event_type == "step_complete":
+                            query_logger.debug(f"Step completed: {chunk_count}")
+                        elif event_type == "error":
+                            error_msg = getattr(event.payload, 'error', 'Unknown error')
+                            raise RuntimeError(f"LLM returned error: {error_msg}")
+                if chunk_count > 1000:  # Reasonable limit
+                    query_logger.warning(f"Too many chunks received ({chunk_count}), breaking")
+                    break
+            
+            query_logger.info(f"Received {chunk_count} chunks from LLM (last event: {last_event_type})")
+            
+            if not turn:
+                error_msg = f"No turn completed in response. Last event type: {last_event_type}, Chunk count: {chunk_count}"
+                query_logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            
+            # Create a mock response object for compatibility with existing _extract_response_content
+            class MockResponse:
+                def __init__(self, turn_obj):
+                    self.steps = getattr(turn_obj, 'steps', [])
+                    self.output_message = getattr(turn_obj, 'output_message', None)
+                    # Extract content like CodeGeneratorAgent does
+                    if hasattr(turn_obj, 'output_message') and turn_obj.output_message:
+                        if hasattr(turn_obj.output_message, 'content'):
+                            self.content = turn_obj.output_message.content
+                        else:
+                            self.content = str(turn_obj.output_message)
+                    else:
+                        self.content = "No output message found"
+            
+            response = MockResponse(turn)
+            
             # Extract response content
-            response_text = self._extract_response_content(response)
+            # Extract response text directly like CodeGeneratorAgent
+            if hasattr(turn, 'output_message') and turn.output_message and hasattr(turn.output_message, 'content'):
+                response_text = turn.output_message.content
+            else:
+                response_text = "No content found in response"
             
             # Clean up agent commentary from response
             if response_text:
@@ -256,13 +302,62 @@ CRITICAL RULES:
         query_logger.info(f"Processing question: {question[:100]}...")
         
         try:
-            session_id = self.agent.create_session(f"session-{uuid.uuid4()}")
+            # Use direct client calls like ChefAnalysisAgent and CodeGeneratorAgent
+            session_id = self.session_id or self.create_new_session(correlation_id)
             
-            response = self.agent.create_turn(
-                messages=[{"role": "user", "content": question}],
+            generator = self.client.agents.turn.create(
+                agent_id=self.agent_id,
                 session_id=session_id,
-                stream=False
+                messages=[{"role": "user", "content": question}],
+                stream=True
             )
+            
+            # Process streaming response EXACTLY like CodeGeneratorAgent
+            turn = None
+            chunk_count = 0
+            last_event_type = None
+            
+            for chunk in generator:
+                chunk_count += 1
+                if hasattr(chunk, 'event') and chunk.event:
+                    event = chunk.event
+                    if hasattr(event, 'payload') and event.payload:
+                        event_type = getattr(event.payload, 'event_type', None)
+                        last_event_type = event_type
+                        if event_type == "turn_complete":
+                            turn = getattr(event.payload, 'turn', None)
+                            break
+                        elif event_type == "step_complete":
+                            query_logger.debug(f"Step completed: {chunk_count}")
+                        elif event_type == "error":
+                            error_msg = getattr(event.payload, 'error', 'Unknown error')
+                            raise RuntimeError(f"LLM returned error: {error_msg}")
+                if chunk_count > 1000:  # Reasonable limit
+                    query_logger.warning(f"Too many chunks received ({chunk_count}), breaking")
+                    break
+            
+            query_logger.info(f"Received {chunk_count} chunks from LLM (last event: {last_event_type})")
+            
+            if not turn:
+                error_msg = f"No turn completed in response. Last event type: {last_event_type}, Chunk count: {chunk_count}"
+                query_logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            
+            # Create a mock response object for compatibility with existing _extract_response_content
+            class MockResponse:
+                def __init__(self, turn_obj):
+                    self.steps = getattr(turn_obj, 'steps', [])
+                    self.output_message = getattr(turn_obj, 'output_message', None)
+                    # Extract content like CodeGeneratorAgent does
+                    if hasattr(turn_obj, 'output_message') and turn_obj.output_message:
+                        if hasattr(turn_obj.output_message, 'content'):
+                            self.content = turn_obj.output_message.content
+                        else:
+                            self.content = str(turn_obj.output_message)
+                    else:
+                        self.content = "No output message found"
+            
+            response = MockResponse(turn)
             
             # Use built-in LlamaStack logging to show steps
             query_logger.info("=== Agent Steps for Question: %s ===", question[:50])
@@ -278,7 +373,11 @@ CRITICAL RULES:
                                 result_preview = str(tool_call.result)[:100] + "..." if len(str(tool_call.result)) > 100 else str(tool_call.result)
                                 query_logger.info("  → Tool result preview: %s", result_preview)
             
-            response_text = self._extract_response_content(response)
+            # Extract response text directly like CodeGeneratorAgent
+            if hasattr(turn, 'output_message') and turn.output_message and hasattr(turn.output_message, 'content'):
+                response_text = turn.output_message.content
+            else:
+                response_text = "No content found in response"
             
             return {
                 "question": question,
@@ -406,24 +505,21 @@ CRITICAL RULES:
             return False
 
     async def health_check(self):
-        """Quick health check - using agent instance"""
+        """Quick health check - using direct client calls like other agents"""
         try:
-            # Create a simple session for health check
-            session_id = self.agent.create_session(f"health-check-{uuid.uuid4()}")
-            
-            response = self.agent.create_turn(
-                messages=[{"role": "user", "content": "health check"}],
-                session_id=session_id,
-                stream=False
-            )
-            
-            if response:
-                self.logger.info("ContextAgent health check passed")
-                return True
-            else:
-                self.logger.error("ContextAgent health check failed - no response")
-                return False
+            return {
+                "healthy": True,
+                "vector_db": self.vector_db_id,
+                "agent": "ready" if self.agent_id else "not_ready",
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "model": self.model
+            }
                 
         except Exception as e:
-            self.logger.error(f"ContextAgent health check failed: {e}")
-            return False
+            return {
+                "healthy": False,
+                "error": str(e),
+                "vector_db": self.vector_db_id,
+                "model": self.model
+            }

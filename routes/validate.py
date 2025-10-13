@@ -14,16 +14,20 @@ from agents.validate.validate import (
     process_playbook_validation
 )
 
+# Import ConfigLoader for proper configuration
+from config.config import ConfigLoader
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
 # Create the router
 router = APIRouter(tags=["ansible-validation"])
 
-# Initialize the agent once when the module loads
+# Initialize ConfigLoader and agent once when the module loads
 try:
-    ansible_agent = create_ansible_lint_agent()
-    logger.info("Ansible validation agent initialized successfully")
+    config_loader = ConfigLoader("config.yaml")
+    ansible_agent = create_ansible_lint_agent(config_loader)
+    logger.info("Ansible validation agent initialized successfully with ConfigLoader")
 except Exception as e:
     logger.error(f"Failed to initialize Ansible validation agent: {e}")
     ansible_agent = None

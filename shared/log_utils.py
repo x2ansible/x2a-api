@@ -133,33 +133,33 @@ class CorrelationLogger:
                 '%(asctime)s - %(name)s - %(levelname)s - [%(correlation_id)s] %(message)s'
             ))
     
-    def _log_with_correlation(self, level: str, message: str):
+    def _log_with_correlation(self, level: str, message: str, **kwargs):
         """Log message with correlation ID."""
         extra = {'correlation_id': self.correlation_id}
         if level == 'info':
-            self.logger.info(message, extra=extra)
+            self.logger.info(message, extra=extra, **kwargs)
         elif level == 'warning':
-            self.logger.warning(message, extra=extra)
+            self.logger.warning(message, extra=extra, **kwargs)
         elif level == 'error':
-            self.logger.error(message, extra=extra)
+            self.logger.error(message, extra=extra, **kwargs)
         elif level == 'debug':
-            self.logger.debug(message, extra=extra)
+            self.logger.debug(message, extra=extra, **kwargs)
     
-    def info(self, message: str):
+    def info(self, message: str, *args, **kwargs):
         """Log info message."""
-        self._log_with_correlation('info', message)
+        self._log_with_correlation('info', message % args if args else message, **kwargs)
     
-    def warning(self, message: str):
+    def warning(self, message: str, *args, **kwargs):
         """Log warning message."""
-        self._log_with_correlation('warning', message)
+        self._log_with_correlation('warning', message % args if args else message, **kwargs)
     
-    def error(self, message: str):
+    def error(self, message: str, *args, **kwargs):
         """Log error message."""
-        self._log_with_correlation('error', message)
+        self._log_with_correlation('error', message % args if args else message, **kwargs)
     
-    def debug(self, message: str):
+    def debug(self, message: str, *args, **kwargs):
         """Log debug message."""
-        self._log_with_correlation('debug', message)
+        self._log_with_correlation('debug', message % args if args else message, **kwargs)
 
 
 def step_printer(steps: List[Any], logger: Optional[Any] = None):

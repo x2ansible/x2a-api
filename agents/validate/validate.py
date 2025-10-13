@@ -10,6 +10,9 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 import httpx
 
+# Import ConfigLoader for proper configuration management
+from config.config import ConfigLoader
+
 # ---- Request/Response Models ----
 class PlaybookValidationRequest(BaseModel):
     playbook_content: str
@@ -74,18 +77,37 @@ def run_ansible_lint(playbook_code: str) -> dict:
             os.remove(fname)
 
 # ---- Agent Creation Function ----
-def create_ansible_lint_agent():
-    """Create the LangGraph agent for Ansible validation."""
-    # Hard-coded LLM settings as requested
+def create_ansible_lint_agent(config_loader: ConfigLoader = None):
+    """Create the LangGraph agent for Ansible validation using ConfigLoader."""
+    # Initialize ConfigLoader if not provided
+    if config_loader is None:
+        config_loader = ConfigLoader("config.yaml")
+    
+    # Get LLM configuration from config.yaml
+    llm_api_base = config_loader.get_llm_api_base()
+    llm_model = config_loader.get_llm_model()
+    
+    # Add logging for configuration
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("=== ANSIBLE VALIDATION AGENT CREATION ===")
+    logger.info(f"Using LLM API Base: {llm_api_base}")
+    logger.info(f"Using LLM Model: {llm_model}")
+    
+    # Create LLM with configuration from config.yaml
     llm = ChatOpenAI(
-        model="meta-llama/Llama-3.1-8B-Instruct",
-        base_url="http://llm-ai-agent.apps.cluster-p4mxv.p4mxv.sandbox338.opentlc.com/v1",
+        model=llm_model,
+        base_url=llm_api_base,
         api_key="not-needed",
         temperature=0.0,
         max_tokens=1000,
         top_p=0.95,
         http_client=httpx.Client(timeout=120.0)
     )
+    
+    logger.info("LangGraph agent created successfully")
+    logger.info("=== ANSIBLE VALIDATION AGENT CREATION COMPLETE ===")
+    
     return create_react_agent(llm, [run_ansible_lint])
 
 # ---- Agent Processing Function ----

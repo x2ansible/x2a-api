@@ -1,11 +1,11 @@
 llamastack:
-  base_url: "http://lss-ai-agent.apps.cluster-p4mxv.p4mxv.sandbox338.opentlc.com"
-  default_model: "meta-llama/Llama-3.1-8B-Instruct"
+  base_url: "http://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com"
+  default_model: "llama-4-scout-17b-16e-w4a16"
 
 # LLM Model configuration (separate from LlamaStack)
 llm:
-  api_base: "http://llm-ai-agent.apps.cluster-p4mxv.p4mxv.sandbox338.opentlc.com/v1"
-  model: "meta-llama/Llama-3.1-8B-Instruct"
+  api_base: "https://lss-lss.apps.prod.rhoai.rh-aiservices-bu.com/v1/openai/v1"
+  model: "llama-4-scout-17b-16e-w4a16"
 
 file_storage:
   upload_dir: "./uploads"
@@ -211,7 +211,7 @@ prompts:
 
 agents:
   - name: "chef_analysis"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
+    model: "llama-4-scout-17b-16e-w4a16"
     instructions: "{agent_instructions.chef_analysis}"
     sampling_params:
       strategy:
@@ -222,7 +222,7 @@ agents:
     max_infer_iters: 1
 
   - name: context
-    model: meta-llama/Llama-3.1-8B-Instruct
+    model: llama-4-scout-17b-16e-w4a16
     instructions: "{agent_instructions.context}"
     sampling_params:
       strategy:
@@ -242,7 +242,7 @@ agents:
     max_infer_iters: 3
 
   - name: "generate"
-    model: "meta-llama/Llama-3.1-8B-Instruct"
+    model: "llama-4-scout-17b-16e-w4a16"
     instructions: "{agent_instructions.generate}"
     sampling_params:
       strategy:

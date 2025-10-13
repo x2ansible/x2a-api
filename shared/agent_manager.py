@@ -9,11 +9,15 @@ import json
 import sys
 import argparse
 from datetime import datetime
+import urllib3
+
+# Disable SSL warnings for expired certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def list_all_agents(llamastack_url):
     """List all agents in LlamaStack"""
     try:
-        response = requests.get(f"{llamastack_url}/v1/agents")
+        response = requests.get(f"{llamastack_url}/v1/agents", verify=False)
         if response.status_code != 200:
             print(f" Failed to list agents: {response.status_code}")
             return []
@@ -37,7 +41,7 @@ def list_all_agents(llamastack_url):
 def delete_agent(llamastack_url, agent_id):
     """Delete a specific agent"""
     try:
-        response = requests.delete(f"{llamastack_url}/v1/agents/{agent_id}")
+        response = requests.delete(f"{llamastack_url}/v1/agents/{agent_id}", verify=False)
         if response.status_code in [200, 204]:
             print(f" Deleted agent: {agent_id}")
             return True

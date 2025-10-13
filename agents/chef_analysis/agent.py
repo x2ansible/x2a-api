@@ -146,20 +146,27 @@ class ChefAnalysisAgent:
         step_logger.info(f"[{correlation_id}] Pattern-based analyzing {len(files)} cookbook files")
         try:
             chef_facts = self.pattern_analyzer.extract_chef_facts(files)
-            total_resources = sum(len(resources) for resources in chef_facts['resources'].values())
-            valid_files = sum(1 for v in chef_facts['syntax_validation'].values() if v.get('valid', False))
-            total_files = len(chef_facts['syntax_validation'])
-            chef_facts['summary'] = {
-                'total_files': total_files,
-                'valid_files': valid_files,
-                'syntax_success_rate': round((valid_files / total_files) * 100, 1) if total_files > 0 else 0,
-                'total_resources': total_resources,
-                'has_metadata': bool(chef_facts['metadata']),
-                'is_wrapper': len(chef_facts['dependencies']['include_recipes']) > 0,
-                'complexity_score': self._calculate_complexity_score(chef_facts),
-                'extraction_method': chef_facts.get('extraction_method', 'unknown'),
-                'ast_available': chef_facts.get('summary', {}).get('ast_available', False)
-            }
+            
+            # Check if Tree-sitter already provided a complete summary
+            if 'summary' in chef_facts and chef_facts['summary'].get('extraction_method') == 'tree_sitter_ast':
+                # Tree-sitter provided complete analysis - use it as-is
+                step_logger.info(f"[{correlation_id}] Using Tree-sitter provided summary")
+            else:
+                # Legacy pattern analyzer - calculate summary ourselves
+                total_resources = sum(len(resources) for resources in chef_facts['resources'].values())
+                valid_files = sum(1 for v in chef_facts['syntax_validation'].values() if v.get('valid', False))
+                total_files = len(chef_facts['syntax_validation'])
+                chef_facts['summary'] = {
+                    'total_files': total_files,
+                    'valid_files': valid_files,
+                    'syntax_success_rate': round((valid_files / total_files) * 100, 1) if total_files > 0 else 0,
+                    'total_resources': total_resources,
+                    'has_metadata': bool(chef_facts['metadata']),
+                    'is_wrapper': len(chef_facts['dependencies']['include_recipes']) > 0,
+                    'complexity_score': self._calculate_complexity_score(chef_facts),
+                    'extraction_method': chef_facts.get('extraction_method', 'unknown'),
+                    'ast_available': chef_facts.get('summary', {}).get('ast_available', False)
+                }
             step_logger.info(f"[{correlation_id}] Extraction complete:")
             step_logger.info(f"[{correlation_id}]   Packages: {len(chef_facts['resources']['packages'])}")
             step_logger.info(f"[{correlation_id}]   Services: {len(chef_facts['resources']['services'])}")
@@ -172,7 +179,9 @@ class ChefAnalysisAgent:
             step_logger.info(f"[{correlation_id}]   AST available: {chef_facts['summary']['ast_available']}")
             return chef_facts
         except Exception as e:
+            import traceback
             step_logger.warning(f"[{correlation_id}] Pattern-based extraction failed: {e}")
+            step_logger.warning(f"[{correlation_id}] Exception details: {traceback.format_exc()}")
             step_logger.info(f"[{correlation_id}] Returning empty facts structure for fallback")
             return self._create_empty_facts_structure()
 
@@ -311,7 +320,12 @@ class ChefAnalysisAgent:
             merged_result["analysis_method"] = "llm_only"
             step_logger.info(f"[{correlation_id}] Using LLM analysis only")
             
-        if pattern_facts.get('pattern_analyzer_enabled', False):
+        # Debug: Log pattern_facts status
+        pattern_enabled = pattern_facts.get('pattern_analyzer_enabled', False)
+        step_logger.info(f"[{correlation_id}] DEBUG: pattern_analyzer_enabled = {pattern_enabled}")
+        step_logger.info(f"[{correlation_id}] DEBUG: pattern_facts keys = {list(pattern_facts.keys()) if pattern_facts else 'None'}")
+        
+        if pattern_enabled:
             if "functionality" not in merged_result:
                 merged_result["functionality"] = {}
             merged_result["functionality"]["services"] = pattern_facts["resources"]["services"]
@@ -337,6 +351,7 @@ class ChefAnalysisAgent:
                 "ast_available": pattern_facts["summary"]["ast_available"],
                 "pattern_fallback_used": pattern_facts["summary"].get("pattern_fallback_used", False)
             }
+            step_logger.info(f"[{correlation_id}]  Added pattern_analyzer_facts to result")
             step_logger.info(f"[{correlation_id}] Merged {pattern_facts['summary']['total_resources']} resources using {pattern_facts['summary']['extraction_method']} method")
         else:
             step_logger.warning(f"[{correlation_id}] Pattern-based facts unavailable, using LLM analysis only")
