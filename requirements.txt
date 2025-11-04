@@ -28,6 +28,10 @@ fire
 # Enhanced regex support for pattern matching
 regex>=2022.0.0
 
+# Tree-sitter for advanced AST parsing (Chef cookbook analysis)
+tree-sitter==0.20.4
+tree-sitter-languages==1.10.2
+
 # Optional: Additional parsing libraries for future extensibility
 
 # HCL parsing for Terraform support (future)
